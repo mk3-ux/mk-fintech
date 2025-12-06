@@ -9,3 +9,4 @@ markdown-it-py
 groq>=0.9.0
 typing-extensions
 requests
+fpdf==1.7.2
