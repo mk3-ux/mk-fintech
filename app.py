@@ -11,7 +11,7 @@ from fpdf import FPDF
 # Config / Client
 # ---------------------------
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-MODEL_NAME = "llama-3.1-70b-chat"
+MODEL_NAME = "llama-3.1-70b-versatile"
 
 client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
