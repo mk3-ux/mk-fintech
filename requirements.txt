@@ -1,2 +1,10 @@
 streamlit==1.36.0
 pandas==2.2.2
+numpy
+altair>=5.0
+pyarrow
+tornado
+blinker
+markdown-it-py
+typing-extensions
+requests
