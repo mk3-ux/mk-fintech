@@ -1,13 +1,20 @@
+import os
 import streamlit as st
 import pandas as pd
 import numpy as np
 import altair as alt
+from openai import OpenAI
+
+# ------------------------------------------------------------
+# OpenAI client (expects OPENAI_API_KEY in env / Streamlit secrets)
+# ------------------------------------------------------------
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # ------------------------------------------------------------
 # Page config
 # ------------------------------------------------------------
 st.set_page_config(
-    page_title="Katta Fintech – Macro & Markets Explorer",
+    page_title="Katta Fintech – Sector & Stock Explorer",
     layout="wide",
 )
 
@@ -30,7 +37,7 @@ st.markdown(
       </div>
       <div>
         <div style="font-size:1.3rem; font-weight:700;">Katta Fintech</div>
-        <div style="font-size:0.9rem; color:#6B7280;">Macro &amp; Markets Explorer</div>
+        <div style="font-size:0.9rem; color:#6B7280;">Sector &amp; Stock Impact Explorer</div>
       </div>
     </div>
     <hr style="margin-top:0.4rem; margin-bottom:0.8rem;">
@@ -71,14 +78,11 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.sidebar.subheader("Mode")
-mode = st.sidebar.radio(
-    "Choose mode:",
-    ["Pre-set Macro Scenarios", "Build Your Own Scenario"],
-)
+# Tabs: 1) Sector / scenario explorer  2) AI chatbot
+tab_explorer, tab_chat = st.tabs(["📊 Sector & Scenario Explorer", "🤖 AI Stock & Finance Chatbot"])
 
 # ------------------------------------------------------------
-# Define macro variables & sectors
+# Shared definitions for the explorer tab
 # ------------------------------------------------------------
 macro_variables = [
     "Interest Rates",
@@ -89,6 +93,7 @@ macro_variables = [
     "Geopolitical Tension",
 ]
 
+# Think of these as **stock sectors / ETFs**:
 sectors = [
     "Tech",
     "Real Estate",
@@ -99,15 +104,13 @@ sectors = [
     "Banks",
 ]
 
-# ------------------------------------------------------------
-# Scenario definitions (for preset mode)
-# Values range roughly -5 (very negative) to +5 (very positive)
-# ------------------------------------------------------------
+# Pre-set scenarios, but described in stock/markets language
 preset_scenarios = {
-    "Interest Rates Go Up": {
+    "Rate Hike (Tightening Cycle)": {
         "description": (
             "Central banks raise interest rates to cool the economy or fight inflation. "
-            "Housing and growth stocks may fall, while banks may benefit."
+            "Growth and rate-sensitive stocks (Tech, Real Estate, Luxury) may struggle, "
+            "while banks can benefit from higher net interest margins."
         ),
         "macros": {
             "Interest Rates": 4,
@@ -118,10 +121,10 @@ preset_scenarios = {
             "Geopolitical Tension": 0,
         },
     },
-    "High Inflation": {
+    "High Inflation Environment": {
         "description": (
-            "Prices are rising quickly. Central banks may hike rates, consumers cut back on "
-            "non-essential spending, and companies with pricing power do better."
+            "Prices are rising quickly. Central banks may keep hiking, consumers feel pressure, "
+            "and sectors with pricing power or real assets may hold up relatively better."
         ),
         "macros": {
             "Interest Rates": 2,
@@ -132,10 +135,10 @@ preset_scenarios = {
             "Geopolitical Tension": 0,
         },
     },
-    "Recession Risk": {
+    "Recession / Slowdown": {
         "description": (
-            "Economic growth slows sharply or turns negative. Unemployment rises and investors "
-            "move into safer, defensive sectors."
+            "Economic growth slows sharply or turns negative. Unemployment rises, earnings estimates "
+            "get cut, and investors rotate into defensive, lower-volatility sectors."
         ),
         "macros": {
             "Interest Rates": -1,
@@ -146,10 +149,10 @@ preset_scenarios = {
             "Geopolitical Tension": 1,
         },
     },
-    "Oil Shock": {
+    "Oil & Geopolitics Shock": {
         "description": (
-            "Oil prices spike after a supply shock. Energy companies can benefit, but "
-            "transportation and consumers feel pressure."
+            "Oil prices spike after a supply shock or conflict. Energy stocks may rally, while "
+            "transportation, airlines, and some consumer segments face margin pressure."
         ),
         "macros": {
             "Interest Rates": 1,
@@ -162,12 +165,7 @@ preset_scenarios = {
     },
 }
 
-# ------------------------------------------------------------
-# Weights model: how each macro variable affects each sector
-# (simple, transparent, Ivy-friendly explanation)
-# Positive weight = helps the sector when the macro value is high
-# Negative weight = hurts the sector when the macro value is high
-# ------------------------------------------------------------
+# Simple weights model: macro → sector impact (still intuitive, but framed for stocks)
 weights = {
     "Tech": {
         "Interest Rates": -1.6,
@@ -259,149 +257,194 @@ def compute_sector_scores(macro_values: dict) -> pd.DataFrame:
 
 
 # ------------------------------------------------------------
-# Main layout
+# TAB 1: Sector & Scenario Explorer
 # ------------------------------------------------------------
-col_main, col_side = st.columns([3, 1])
+with tab_explorer:
+    col_main, col_side = st.columns([3, 1])
 
-with col_main:
-    st.title("Macro & Markets Explorer")
+    with col_main:
+        st.title("Sector Impact under Different Market Environments")
 
-    if mode == "Pre-set Macro Scenarios":
-        st.subheader("Pre-set Macro Scenarios")
-    else:
-        st.subheader("Build Your Own Scenario")
+    with col_side:
+        st.markdown(
+            """
+            **How to use this tab**
 
-with col_side:
-    st.markdown(
-        """
-        **How to use this app**
-
-        1. Choose a mode on the left.  
-        2. Pick a macro scenario or set your own sliders.  
-        3. Read the sector impact table.  
-        4. Use the chart to compare winners and losers.
-        """
-    )
-
-st.markdown("")  # small spacing
-
-# ------------------------------------------------------------
-# Scenario selection / sliders
-# ------------------------------------------------------------
-if mode == "Pre-set Macro Scenarios":
-    scenario_name = st.selectbox("Select a macro scenario:", list(preset_scenarios.keys()))
-    scenario = preset_scenarios[scenario_name]
-
-    st.markdown(f"**Scenario: {scenario_name}**")
-    st.markdown(scenario["description"])
-
-    macro_values = scenario["macros"]
-
-else:
-    st.markdown("Use the sliders to build your own macro scenario.")
-
-    macro_values = {}
-    # Use columns to keep sliders tidy
-    c1, c2 = st.columns(2)
-    with c1:
-        macro_values["Interest Rates"] = st.slider("Interest Rates", -5, 5, 0)
-        macro_values["GDP Growth"] = st.slider("GDP Growth", -5, 5, 0)
-        macro_values["Oil Prices"] = st.slider("Oil Prices", -5, 5, 0)
-    with c2:
-        macro_values["Inflation"] = st.slider("Inflation", -5, 5, 0)
-        macro_values["Unemployment"] = st.slider("Unemployment", -5, 5, 0)
-        macro_values["Geopolitical Tension"] = st.slider("Geopolitical Tension", -5, 5, 0)
-
-# ------------------------------------------------------------
-# Explain macro variables (tooltips via expander)
-# ------------------------------------------------------------
-with st.expander("What do these macro variables mean?"):
-    st.markdown(
-        """
-        - **Interest Rates** – How expensive it is to borrow money. Higher rates usually slow
-          the economy and hurt growth stocks and housing, but can help banks.
-        - **Inflation** – How quickly prices are rising. High inflation erodes purchasing power
-          and can force central banks to raise interest rates.
-        - **GDP Growth** – How fast the total economy is growing. Strong growth supports
-          corporate earnings; weak growth or negative GDP signals recession risk.
-        - **Unemployment** – The percentage of people without jobs. Rising unemployment usually
-          means weaker demand and pressure on most sectors.
-        - **Oil Prices** – Cost of energy and transportation. High oil prices can help energy
-          companies but hurt transportation and consumer spending.
-        - **Geopolitical Tension** – Wars, conflicts, and international disputes that can disrupt
-          trade, supply chains, and investor confidence.
-        """
-    )
-
-# ------------------------------------------------------------
-# Compute & display sector impacts
-# ------------------------------------------------------------
-df = compute_sector_scores(macro_values)
-
-st.markdown("### Sector Impact Overview")
-
-col_table, col_chart = st.columns([2, 3])
-
-with col_table:
-    st.dataframe(
-        df.style.format({"Impact Score": "{:+.1f}"}),
-        hide_index=True,
-        use_container_width=True,
-    )
-
-with col_chart:
-    chart = (
-        alt.Chart(df)
-        .mark_bar(color=accent_color)
-        .encode(
-            x=alt.X("Sector:N", sort=None),
-            y=alt.Y("Impact Score:Q"),
-            tooltip=["Sector", "Impact Score", "Impact Label"],
+            1. Choose a pre-set market environment or build your own.
+            2. See which **stock sectors** are helped or hurt.
+            3. Use the summary to practice explaining sector rotation.
+            """
         )
-        .properties(height=350)
+
+    mode = st.radio(
+        "Choose mode:",
+        ["Pre-set Market Environments", "Build Your Own Scenario"],
     )
-    st.altair_chart(chart, use_container_width=True)
+
+    if mode == "Pre-set Market Environments":
+        scenario_name = st.selectbox("Select a market environment:", list(preset_scenarios.keys()))
+        scenario = preset_scenarios[scenario_name]
+
+        st.markdown(f"**Scenario: {scenario_name}**")
+        st.markdown(scenario["description"])
+
+        macro_values = scenario["macros"]
+
+    else:
+        st.markdown("Use the sliders to build your own **market environment**.")
+        macro_values = {}
+        c1, c2 = st.columns(2)
+        with c1:
+            macro_values["Interest Rates"] = st.slider("Interest Rates (higher = tighter)", -5, 5, 0)
+            macro_values["GDP Growth"] = st.slider("GDP Growth (trend vs. shock)", -5, 5, 0)
+            macro_values["Oil Prices"] = st.slider("Oil Prices", -5, 5, 0)
+        with c2:
+            macro_values["Inflation"] = st.slider("Inflation", -5, 5, 0)
+            macro_values["Unemployment"] = st.slider("Unemployment", -5, 5, 0)
+            macro_values["Geopolitical Tension"] = st.slider("Geopolitical Tension", -5, 5, 0)
+
+    with st.expander("What do these variables mean in a stock context?"):
+        st.markdown(
+            """
+            - **Interest Rates** – Higher rates can pressure growth stocks and real estate, but often help banks
+              via higher net interest margins.
+            - **Inflation** – High inflation can hurt consumers and bonds, but sometimes helps real assets and
+              companies with strong pricing power.
+            - **GDP Growth** – Strong growth tends to support cyclicals and discretionary sectors. Weak growth or
+              contraction favors defensive sectors.
+            - **Unemployment** – Rising unemployment usually pressures earnings, especially for cyclical and
+              consumer-exposed sectors.
+            - **Oil Prices** – High oil prices are usually positive for **Energy** stocks but negative for airlines,
+              transportation, and some consumer names.
+            - **Geopolitical Tension** – Conflicts and tensions can raise risk premiums, impact global trade, and
+              make investors rotate into perceived safe havens.
+            """
+        )
+
+    df = compute_sector_scores(macro_values)
+
+    st.markdown("### Sector Impact Overview")
+
+    col_table, col_chart = st.columns([2, 3])
+
+    with col_table:
+        st.dataframe(
+            df.style.format({"Impact Score": "{:+.1f}"}),
+            hide_index=True,
+            use_container_width=True,
+        )
+
+    with col_chart:
+        chart = (
+            alt.Chart(df)
+            .mark_bar(color=accent_color)
+            .encode(
+                x=alt.X("Sector:N", sort=None),
+                y=alt.Y("Impact Score:Q"),
+                tooltip=["Sector", "Impact Score", "Impact Label"],
+            )
+            .properties(height=350)
+        )
+        st.altair_chart(chart, use_container_width=True)
+
+    st.markdown("### Summary (Practice Explaining Sector Rotation)")
+
+    sorted_df = df.sort_values("Impact Score", ascending=False)
+    winners = sorted_df.head(2)
+    losers = sorted_df.tail(2)
+
+    winner_text = ", ".join(f"{row.Sector} ({row['Impact Label']})" for _, row in winners.iterrows())
+    loser_text = ", ".join(f"{row.Sector} ({row['Impact Label']})" for _, row in losers.iterrows())
+
+    st.markdown(
+        f"""
+        - **Likely winners in this environment:** {winner_text}  
+        - **Likely under pressure:** {loser_text}
+        """
+    )
+
+    with st.expander("Model details (for teachers / reviewers)"):
+        st.markdown(
+            """
+            This is a **teaching model**, not a trading system. It uses:
+
+            1. Macro-style inputs (rates, inflation, growth, etc.) as proxies for the market environment.
+            2. Intuitive **weights** that describe how each stock sector tends to react to those variables.
+            3. A normalized score in the range roughly -5 to +5, translated into labels like
+               *Strong Negative* or *Mild Positive*.
+
+            Students can use this to practice:
+            - Explaining why a given sector might outperform or underperform.
+            - Connecting news headlines (rate hikes, oil shocks, recessions) to sector-level impacts.
+            """
+        )
 
 # ------------------------------------------------------------
-# Summary: winners & losers in plain English
+# TAB 2: AI Stock & Finance Chatbot
 # ------------------------------------------------------------
-st.markdown("### Summary")
+with tab_chat:
+    st.title("AI Stock & Finance Chatbot (Educational)")
 
-sorted_df = df.sort_values("Impact Score", ascending=False)
-winners = sorted_df.head(2)
-losers = sorted_df.tail(2)
-
-winner_text = ", ".join(f"{row.Sector} ({row['Impact Label']})" for _, row in winners.iterrows())
-loser_text = ", ".join(f"{row.Sector} ({row['Impact Label']})" for _, row in losers.iterrows())
-
-st.markdown(
-    f"""
-    - **Likely winners:** {winner_text}  
-    - **Likely under pressure:** {loser_text}
-    """
-)
-
-# ------------------------------------------------------------
-# Model details (for college / interviewer)
-# ------------------------------------------------------------
-with st.expander("How this model works (for teachers / reviewers)"):
     st.markdown(
         """
-        This app is **not** a trading system. It is a learning tool that uses a simple,
-        transparent scoring model:
+        Ask questions about **stocks, sectors, portfolio concepts, or market scenarios**.
 
-        1. Each macro variable (interest rates, inflation, etc.) is scaled from **-5** (strong
-           negative shock) to **+5** (strong positive shock).
-        2. For each sector, we assign intuitive **weights** that represent how sensitive that
-           sector is to each macro variable. For example:
-           - Banks have a **positive weight** to interest rates (they often benefit when rates rise).
-           - Tech and Real Estate have **negative weights** to higher interest rates.
-           - Energy has a **strong positive weight** to oil prices.
-        3. The app calculates a raw score for each sector as a weighted sum of macro values, then
-           rescales scores roughly into the range **-5 to +5**.
-        4. Finally, we convert these scores into labels like *Strong Negative*, *Mild Positive*, etc.
-
-        This approach makes the logic easy to explain to students, teachers, or interviewers while
-        still reflecting real economic intuition.
+        > ℹ️ This chatbot is for **education only** – it explains concepts and scenarios, but it
+        does **not** give personalized investment advice or specific buy/sell recommendations.
         """
     )
+
+    if "chat_messages" not in st.session_state:
+        st.session_state.chat_messages = []
+
+    # Display chat history
+    for msg in st.session_state.chat_messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    user_input = st.chat_input("Ask about stocks, sectors, ETFs, risk, diversification, etc...")
+
+    def call_ai_chat(history, user_text: str) -> str:
+        """Call OpenAI chat API with a stock/finance educational assistant."""
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a calm, clear stock market and finance tutor. "
+                    "You explain concepts about stocks, ETFs, sectors, risk, diversification, "
+                    "macro environments, and long-term investing. "
+                    "You do NOT give personalized financial advice, do NOT say 'buy' or 'sell' any "
+                    "specific security, and you do NOT claim to know current or future prices. "
+                    "Focus on education, frameworks, and examples."
+                ),
+            }
+        ]
+        # Add prior turns
+        for m in history[-8:]:
+            messages.append({"role": m["role"], "content": m["content"]})
+        # Add latest user message
+        messages.append({"role": "user", "content": user_text})
+
+        try:
+            completion = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=messages,
+                temperature=0.4,
+            )
+            return completion.choices[0].message.content
+        except Exception as e:
+            return f"Sorry, I ran into an error talking to the AI service: `{e}`"
+
+    if user_input:
+        # Show user message
+        st.session_state.chat_messages.append({"role": "user", "content": user_input})
+        with st.chat_message("user"):
+            st.markdown(user_input)
+
+        # Get AI reply
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking about your question..."):
+                reply = call_ai_chat(st.session_state.chat_messages, user_input)
+                st.markdown(reply)
+
+        st.session_state.chat_messages.append({"role": "assistant", "content": reply})
