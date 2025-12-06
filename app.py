@@ -1,25 +1,16 @@
 import os
 import streamlit as st
 import pandas as pd
-import numpy as np
 import altair as alt
-import google.generativeai as genai
+from groq import Groq
 
 # ------------------------------------------------------------
-# Gemini client (expects GOOGLE_API_KEY in Streamlit Secrets)
+# Groq client (expects GROQ_API_KEY in Streamlit Secrets)
 # ------------------------------------------------------------
-GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+MODEL_NAME = "llama-3.1-70b-versatile"  # strong, free Groq model
 
-MODEL_NAME = "gemini-1.5-flash"  # if 404, change to "gemini-pro"
-
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-    try:
-        gemini_model = genai.GenerativeModel(MODEL_NAME)
-    except Exception:
-        gemini_model = None
-else:
-    gemini_model = None
+client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
 # ------------------------------------------------------------
 # Page config
@@ -30,7 +21,7 @@ st.set_page_config(
     page_icon="📈",
 )
 
-# --- Light theme colors (no dark mode toggle) ---
+# --- Light theme styling (clean, centered, no dark mode) ---
 COLORS = {
     "bg": "#F8FAFF",
     "text": "#0F172A",
@@ -39,7 +30,6 @@ COLORS = {
     "subtle": "#E5E7EB",
 }
 
-# Global background style (soft, centered layout)
 st.markdown(
     f"""
     <style>
@@ -51,6 +41,11 @@ st.markdown(
             max-width: 1200px;
             padding-top: 2rem;
             padding-bottom: 3rem;
+        }}
+        /* Softer tabs */
+        button[data-baseweb="tab"] {{
+            border-radius: 999px !important;
+            padding: 0.3rem 1.2rem !important;
         }}
     </style>
     """,
@@ -97,8 +92,8 @@ preset_scenarios = {
     },
     "High Inflation Environment": {
         "description": (
-            "Prices are rising quickly. Central banks may keep hiking, consumers feel pressure, "
-            "and sectors with pricing power or real assets may hold up relatively better."
+            "Prices are rising quickly. Consumers feel pressure, and sectors with pricing power "
+            "or real assets may hold up relatively better."
         ),
         "macros": {
             "Interest Rates": 2,
@@ -111,8 +106,8 @@ preset_scenarios = {
     },
     "Recession / Slowdown": {
         "description": (
-            "Economic growth slows sharply or turns negative. Unemployment rises, earnings "
-            "estimates get cut, and investors rotate into defensive, lower-volatility sectors."
+            "Economic growth slows or turns negative. Unemployment rises, and investors rotate "
+            "into defensive, lower-volatility sectors."
         ),
         "macros": {
             "Interest Rates": -1,
@@ -231,16 +226,16 @@ def compute_sector_scores(macro_values: dict) -> pd.DataFrame:
 
 
 def call_ai_chat(history, user_text: str, level: str) -> str:
-    """Call Gemini with a stock/finance educational assistant."""
-    if gemini_model is None:
+    """Call Groq Llama 3.1 as a finance tutor (concepts only, no advice)."""
+    if client is None:
         return (
-            "The AI chatbot is not configured correctly yet. "
-            "Make sure GOOGLE_API_KEY is set in Secrets and the model name is valid."
+            "The AI tutor is not configured yet. Please add GROQ_API_KEY in Secrets on "
+            "Streamlit Cloud and reboot the app."
         )
 
     level_line = {
         "Beginner": "Explain everything in simple, high-school friendly language.",
-        "Intermediate": "Use some financial vocabulary, but still be clear and structured.",
+        "Intermediate": "Use some finance vocabulary, but stay clear and structured.",
         "Advanced": "You may use more technical finance language and deeper concepts.",
     }.get(level, "Explain in clear, student-friendly language.")
 
@@ -254,24 +249,27 @@ def call_ai_chat(history, user_text: str, level: str) -> str:
         + level_line
     )
 
-    convo_lines = [f"System: {system_prompt}"]
+    messages = [
+        {"role": "system", "content": system_prompt},
+    ]
     for m in history[-8:]:
-        role = "User" if m["role"] == "user" else "Assistant"
-        convo_lines.append(f"{role}: {m['content']}")
-    convo_lines.append(f"User: {user_text}")
-    convo_lines.append("Assistant:")
-
-    prompt = "\n\n".join(convo_lines)
+        messages.append({"role": m["role"], "content": m["content"]})
+    messages.append({"role": "user", "content": user_text})
 
     try:
-        response = gemini_model.generate_content(prompt)
-        return response.text.strip()
+        completion = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=messages,
+            max_tokens=700,
+            temperature=0.4,
+        )
+        return completion.choices[0].message.content.strip()
     except Exception as e:
         return f"Sorry, I ran into an error talking to the AI service: `{e}`"
 
 
 def render_header():
-    # soft pill card with logo + title
+    # Gradient pill with logo + title (no "student project" label)
     st.markdown(
         f"""
         <div style="
@@ -290,7 +288,7 @@ def render_header():
         unsafe_allow_html=True,
     )
 
-    # logo
+    # Logo: use file if present, else KF badge
     if os.path.exists("logo.png"):
         st.image("logo.png", width=64)
     else:
@@ -313,16 +311,12 @@ def render_header():
           </div>
           <div style="flex:1 1 auto;">
             <div style="font-size:1.7rem;font-weight:800;color:{COLORS['text']};">
-              Macro & Markets Explorer
+              Katta Fintech – Macro & Markets Explorer
             </div>
             <div style="font-size:0.95rem;color:#4B5563;">
-              A Katta Fintech project – exploring how macro environments can influence stock sectors,
-              with an educational AI finance tutor.
+              Explore how different market environments can influence stock sectors,
+              and use the built-in AI tutor to practice explaining your reasoning.
             </div>
-          </div>
-          <div style="flex:0 0 auto;font-size:0.78rem;color:#047857;
-                      background:#DCFCE7;border-radius:999px;padding:0.45rem 0.9rem;">
-            Student project · Educational only
           </div>
         </div>
         """,
@@ -331,7 +325,7 @@ def render_header():
 
 
 # ------------------------------------------------------------
-# Sidebar (only level selector now)
+# Sidebar
 # ------------------------------------------------------------
 with st.sidebar:
     st.title("Katta Fintech")
@@ -343,12 +337,12 @@ with st.sidebar:
     st.markdown("---")
     st.markdown(
         """
-        **What this app shows**
+        **What this app demonstrates**
 
         - Macro → sector intuition  
         - Interactive charts  
-        - AI finance tutor (Gemini)  
-        - Clean student-built UI
+        - AI finance tutor (Groq Llama 3.1)  
+        - Clean Streamlit UI
         """
     )
 
@@ -358,7 +352,7 @@ with st.sidebar:
 render_header()
 
 tab_explorer, tab_chat, tab_learn = st.tabs(
-    ["📊 Sector & Scenario Explorer", "🤖 Finance Chatbot", "📚 Learning Center"]
+    ["📊 Sector & Scenario Explorer", "🤖 Finance Tutor", "📚 Learning Lab"]
 )
 
 # ------------ TAB 1: Explorer ------------
@@ -431,43 +425,40 @@ with tab_explorer:
         - **Facing more headwinds:** {loser_text}
         """
     )
-    st.caption("This is a simplified educational model – not investment advice or a trading system.")
+    st.caption(
+        "This is a simplified educational model – not investment advice or a trading system."
+    )
 
-# ------------ TAB 2: Chatbot ------------
+# ------------ TAB 2: Finance Tutor ------------
 with tab_chat:
-    st.subheader("Ask the Finance Tutor (Gemini-powered, educational only)")
-
-    if gemini_model is None:
-        st.warning(
-            "The Gemini client is not ready. Check your GOOGLE_API_KEY in Secrets and the model name "
-            f'("{MODEL_NAME}").'
-        )
+    st.subheader("Ask the Finance Tutor (concepts only)")
 
     st.markdown(
         """
         Ask about **stocks, ETFs, sectors, diversification, risk, or macro environments**.  
-        The assistant explains concepts but **never tells you to buy or sell anything.**
+        The tutor explains ideas and frameworks, but does **not** tell you what to buy or sell.
         """
     )
 
     if "chat_messages" not in st.session_state:
         st.session_state.chat_messages = []
 
-    st.markdown("**Try a sample question:**")
+    # Sample prompts as buttons
+    st.markdown("**Try a quick prompt:**")
     c1, c2, c3 = st.columns(3)
     sample_q = None
     if c1.button("📦 What is an ETF?"):
         sample_q = "Explain what an ETF is to a high-school student."
-    if c2.button("📉 Why do rate hikes hurt growth stocks?"):
+    if c2.button("📉 Rate hikes & growth stocks"):
         sample_q = "Why do rising interest rates often hurt growth stocks like tech?"
-    if c3.button("🛡️ What is diversification?"):
+    if c3.button("🛡️ Diversification"):
         sample_q = "What does diversification mean in investing, and why does it matter?"
 
-    user_input = st.chat_input("Type your own question here...")
+    user_input = st.chat_input("Type your question here...")
     if sample_q and not user_input:
         user_input = sample_q
 
-    # show history
+    # Show chat history
     for msg in st.session_state.chat_messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
@@ -484,55 +475,45 @@ with tab_chat:
 
         st.session_state.chat_messages.append({"role": "assistant", "content": reply})
 
-# ------------ TAB 3: Learning Center ------------
+# ------------ TAB 3: Learning Lab ------------
 with tab_learn:
-    st.subheader("Key Ideas Behind This Project")
+    st.subheader("Learning Lab – How this app works")
 
     st.markdown(
         """
-        This app is designed as a **teaching tool** that a teacher, mentor, or college
-        admissions reader can quickly understand.
+        This app is meant to help you **connect big-picture news to sector-level market moves**, and
+        to practice talking through your reasoning the way an analyst might.
         """
     )
 
-    st.markdown("#### 1. Macro → Markets intuition")
+    st.markdown("#### 1. Macro → sector intuition")
     st.markdown(
         """
         - Changes in **interest rates, inflation, growth, unemployment, oil, and geopolitics**
           don't move all stocks the same way.  
-        - Investors often talk about **sectors** (Tech, Banks, Energy, etc.).  
+        - Investors often talk in terms of **sectors** (Tech, Banks, Energy, etc.).  
         - This app encodes a simple rule-of-thumb model for how each sector *might* react.
         """
     )
 
-    st.markdown("#### 2. Educational model, not trading system")
+    st.markdown("#### 2. Educational model, not a forecast")
     st.markdown(
         """
-        - The numbers are **normalized impact scores**, not price targets or return forecasts.  
-        - The goal is for students to practice *explaining stories* like:  
+        - The scores here are **normalized impact scores**, not price targets or return forecasts.  
+        - The goal is for you to practice *explaining stories* like:  
           *\"In a rate-hike environment, banks may benefit but growth stocks can be under pressure.\"*  
-        - Real markets are more complex and sometimes do the opposite of what textbooks suggest.
+        - Real markets are messier and sometimes behave differently than textbook logic.
         """
     )
 
-    st.markdown("#### 3. Why this is a strong student project")
-    st.markdown(
-        """
-        - Combines **coding (Python + Streamlit)**, **data visualization (Altair)**,
-          and **economic/finance reasoning**.  
-        - Shows how to integrate a modern **AI model (Gemini)** safely as an educational tutor.  
-        - The UI is intentionally clean and easy for non-technical reviewers to explore.
-        """
-    )
-
-    st.markdown("#### 4. How you might describe it in an application")
+    st.markdown("#### 3. How you might describe this project")
     st.markdown(
         """
         *\"Built an interactive Macro & Markets Explorer web app in Python/Streamlit that models
         how different macroeconomic environments can affect stock market sectors.  
-        Added a Gemini-powered finance tutor that explains concepts like sectors, ETFs,
-        diversification, and rate hikes in student-friendly language.  
-        Designed the app for classmates to experiment with scenarios and practice
-        explaining their reasoning like a junior portfolio manager.\"*
+        Integrated a Groq Llama 3.1–powered finance tutor that explains concepts like sectors,
+        ETFs, diversification, and rate hikes in student-friendly language.  
+        Designed the app to help classmates experiment with scenarios and practice explaining
+        their reasoning like a junior portfolio manager.\"*
         """
     )
