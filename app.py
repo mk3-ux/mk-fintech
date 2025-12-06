@@ -1,135 +1,407 @@
-
 import streamlit as st
 import pandas as pd
+import numpy as np
+import altair as alt
 
-st.set_page_config(page_title="Macro & Markets Explorer", page_icon="📈", layout="wide")
+# ------------------------------------------------------------
+# Page config
+# ------------------------------------------------------------
+st.set_page_config(
+    page_title="Katta Fintech – Macro & Markets Explorer",
+    layout="wide",
+)
 
-SECTORS = [
-    "Tech", "Banks", "Real Estate", "Consumer Staples",
-    "Luxury / Discretionary", "Energy", "Bonds",
+# ------------------------------------------------------------
+# Katta Fintech header / logo
+# ------------------------------------------------------------
+st.markdown(
+    """
+    <div style="display:flex; align-items:center; gap:0.75rem; margin-bottom:0.25rem;">
+      <div style="
+          background:#1D4ED8;
+          color:white;
+          border-radius:12px;
+          padding:0.4rem 0.8rem;
+          font-weight:700;
+          font-size:1.1rem;
+          letter-spacing:0.06em;
+      ">
+        KF
+      </div>
+      <div>
+        <div style="font-size:1.3rem; font-weight:700;">Katta Fintech</div>
+        <div style="font-size:0.9rem; color:#6B7280;">Macro &amp; Markets Explorer</div>
+      </div>
+    </div>
+    <hr style="margin-top:0.4rem; margin-bottom:0.8rem;">
+    """,
+    unsafe_allow_html=True,
+)
+
+# ------------------------------------------------------------
+# Sidebar: theme toggle & mode selection
+# ------------------------------------------------------------
+st.sidebar.subheader("Display")
+dark_mode = st.sidebar.checkbox("🌙 Dark mode", value=False)
+
+if dark_mode:
+    bg_color = "#020617"          # very dark navy
+    text_color = "#E5E7EB"        # light grey
+    card_color = "#0F172A"
+    accent_color = "#38BDF8"      # cyan / teal
+else:
+    bg_color = "#F8FAFF"          # light blue/white
+    text_color = "#0F172A"        # dark navy
+    card_color = "#FFFFFF"
+    accent_color = "#1D4ED8"      # blue
+
+# Apply global background + text color
+st.markdown(
+    f"""
+    <style>
+        .stApp {{
+            background-color: {bg_color};
+            color: {text_color};
+        }}
+        .block-container {{
+            padding-top: 1.5rem;
+        }}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+st.sidebar.subheader("Mode")
+mode = st.sidebar.radio(
+    "Choose mode:",
+    ["Pre-set Macro Scenarios", "Build Your Own Scenario"],
+)
+
+# ------------------------------------------------------------
+# Define macro variables & sectors
+# ------------------------------------------------------------
+macro_variables = [
+    "Interest Rates",
+    "Inflation",
+    "GDP Growth",
+    "Unemployment",
+    "Oil Prices",
+    "Geopolitical Tension",
 ]
 
-SECTOR_SENSITIVITIES = {
-    "Tech": {"rates": -2, "inflation": -1, "gdp": 2, "unemployment": -1,
-             "oil": -1, "geopolitics": -2, "supply_chain": -2, "usd": 1,
-             "confidence": 2, "commodities": -1},
-    "Banks": {"rates": 2, "inflation": 1, "gdp": 1, "unemployment": -1,
-              "oil": 0, "geopolitics": 0, "supply_chain": 0, "usd": 1,
-              "confidence": 1, "commodities": 0},
-    "Real Estate": {"rates": -2, "inflation": -1, "gdp": 1, "unemployment": -1,
-                    "oil": -1, "geopolitics": -1, "supply_chain": -1, "usd": 0,
-                    "confidence": 1, "commodities": -1},
-    "Consumer Staples": {"rates": 0, "inflation": 1, "gdp": 0, "unemployment": 1,
-                         "oil": 0, "geopolitics": 0, "supply_chain": 0, "usd": 0,
-                         "confidence": -1, "commodities": -1},
-    "Luxury / Discretionary": {"rates": -1, "inflation": -1, "gdp": 2, "unemployment": -2,
-                               "oil": -1, "geopolitics": -1, "supply_chain": -1, "usd": 0,
-                               "confidence": 2, "commodities": -1},
-    "Energy": {"rates": 0, "inflation": 2, "gdp": 1, "unemployment": 0,
-               "oil": 2, "geopolitics": 1, "supply_chain": 1, "usd": -1,
-               "confidence": 0, "commodities": 2},
-    "Bonds": {"rates": -2, "inflation": -1, "gdp": -1, "unemployment": 1,
-              "oil": 0, "geopolitics": 1, "supply_chain": 0, "usd": 1,
-              "confidence": -1, "commodities": -1},
-}
+sectors = [
+    "Tech",
+    "Real Estate",
+    "Luxury / Discretionary",
+    "Bonds",
+    "Energy",
+    "Consumer Staples",
+    "Banks",
+]
 
-PRESET_SCENARIOS = {
+# ------------------------------------------------------------
+# Scenario definitions (for preset mode)
+# Values range roughly -5 (very negative) to +5 (very positive)
+# ------------------------------------------------------------
+preset_scenarios = {
     "Interest Rates Go Up": {
-        "factors": {"rates": 2, "inflation": 0, "gdp": 0, "unemployment": 0,
-                    "oil": 0, "geopolitics": 0, "supply_chain": 0, "usd": 1,
-                    "confidence": -1, "commodities": 0},
         "description": (
             "Central banks raise interest rates to cool the economy or fight inflation. "
             "Housing and growth stocks may fall, while banks may benefit."
         ),
+        "macros": {
+            "Interest Rates": 4,
+            "Inflation": 1,
+            "GDP Growth": -1,
+            "Unemployment": 1,
+            "Oil Prices": 0,
+            "Geopolitical Tension": 0,
+        },
     },
-    "High Inflation Shock": {
-        "factors": {"rates": 1, "inflation": 2, "gdp": -1, "unemployment": 0,
-                    "oil": 1, "geopolitics": 0, "supply_chain": 1, "usd": 0,
-                    "confidence": -1, "commodities": 2},
+    "High Inflation": {
         "description": (
-            "Inflation rises quickly. Prices go up, central banks may react, and companies face pressure."
+            "Prices are rising quickly. Central banks may hike rates, consumers cut back on "
+            "non-essential spending, and companies with pricing power do better."
         ),
+        "macros": {
+            "Interest Rates": 2,
+            "Inflation": 4,
+            "GDP Growth": -1,
+            "Unemployment": 1,
+            "Oil Prices": 1,
+            "Geopolitical Tension": 0,
+        },
     },
-    "Recession Fears": {
-        "factors": {"rates": -1, "inflation": 0, "gdp": -2, "unemployment": 2,
-                    "oil": -1, "geopolitics": 0, "supply_chain": 0, "usd": 1,
-                    "confidence": -2, "commodities": -1},
+    "Recession Risk": {
         "description": (
-            "Economic slowdown causes lower spending, higher unemployment, and market uncertainty."
+            "Economic growth slows sharply or turns negative. Unemployment rises and investors "
+            "move into safer, defensive sectors."
         ),
+        "macros": {
+            "Interest Rates": -1,
+            "Inflation": -1,
+            "GDP Growth": -4,
+            "Unemployment": 3,
+            "Oil Prices": -1,
+            "Geopolitical Tension": 1,
+        },
     },
-    "Economic Boom": {
-        "factors": {"rates": 1, "inflation": 1, "gdp": 2, "unemployment": -2,
-                    "oil": 1, "geopolitics": 0, "supply_chain": 0, "usd": 0,
-                    "confidence": 2, "commodities": 1},
+    "Oil Shock": {
         "description": (
-            "Strong GDP growth, strong hiring, and rising company profits lift many sectors."
+            "Oil prices spike after a supply shock. Energy companies can benefit, but "
+            "transportation and consumers feel pressure."
         ),
+        "macros": {
+            "Interest Rates": 1,
+            "Inflation": 3,
+            "GDP Growth": -2,
+            "Unemployment": 1,
+            "Oil Prices": 4,
+            "Geopolitical Tension": 2,
+        },
     },
 }
 
-def calculate_sector_scores(factors):
+# ------------------------------------------------------------
+# Weights model: how each macro variable affects each sector
+# (simple, transparent, Ivy-friendly explanation)
+# Positive weight = helps the sector when the macro value is high
+# Negative weight = hurts the sector when the macro value is high
+# ------------------------------------------------------------
+weights = {
+    "Tech": {
+        "Interest Rates": -1.6,
+        "Inflation": -0.5,
+        "GDP Growth": 1.4,
+        "Unemployment": -1.0,
+        "Oil Prices": -0.4,
+        "Geopolitical Tension": -0.6,
+    },
+    "Real Estate": {
+        "Interest Rates": -1.8,
+        "Inflation": -0.8,
+        "GDP Growth": 0.8,
+        "Unemployment": -1.0,
+        "Oil Prices": -0.3,
+        "Geopolitical Tension": -0.5,
+    },
+    "Luxury / Discretionary": {
+        "Interest Rates": -1.2,
+        "Inflation": -1.0,
+        "GDP Growth": 1.5,
+        "Unemployment": -1.6,
+        "Oil Prices": -0.7,
+        "Geopolitical Tension": -0.6,
+    },
+    "Bonds": {
+        "Interest Rates": -1.3,  # rising rates hurt existing bonds
+        "Inflation": -1.0,
+        "GDP Growth": -0.3,
+        "Unemployment": 0.6,
+        "Oil Prices": -0.4,
+        "Geopolitical Tension": 0.2,
+    },
+    "Energy": {
+        "Interest Rates": -0.3,
+        "Inflation": 0.6,
+        "GDP Growth": 0.6,
+        "Unemployment": -0.4,
+        "Oil Prices": 1.8,
+        "Geopolitical Tension": 1.0,
+    },
+    "Consumer Staples": {
+        "Interest Rates": 0.1,
+        "Inflation": 0.4,
+        "GDP Growth": 0.4,
+        "Unemployment": 0.8,
+        "Oil Prices": -0.2,
+        "Geopolitical Tension": 0.2,
+    },
+    "Banks": {
+        "Interest Rates": 1.8,
+        "Inflation": 0.6,
+        "GDP Growth": 0.7,
+        "Unemployment": -0.5,
+        "Oil Prices": 0.1,
+        "Geopolitical Tension": -0.2,
+    },
+}
+
+
+def compute_sector_scores(macro_values: dict) -> pd.DataFrame:
+    """Compute impact score for each sector based on macro sliders and weights."""
     rows = []
-    for sector in SECTORS:
-        sens = SECTOR_SENSITIVITIES[sector]
-        score = sum(factors[k] * sens[k] for k in factors)
-        label = (
-            "Strong Negative" if score <= -3 else
-            "Mild Negative" if score < 0 else
-            "Neutral" if score == 0 else
-            "Mild Positive" if score < 3 else
-            "Strong Positive"
-        )
-        rows.append({"Sector": sector, "Impact Score": score, "Impact Label": label})
-    return pd.DataFrame(rows).sort_values("Impact Score")
+    for sector in sectors:
+        score = 0.0
+        for macro in macro_variables:
+            score += weights[sector][macro] * macro_values[macro]
+        rows.append({"Sector": sector, "Impact Score": score})
+    df = pd.DataFrame(rows)
+    # Normalize to roughly -5..+5 for nicer display
+    max_abs = df["Impact Score"].abs().max()
+    if max_abs > 0:
+        df["Impact Score"] = df["Impact Score"] / max_abs * 5
+    df["Impact Score"] = df["Impact Score"].round(1)
 
-def explain_factors(f):
-    out = []
-    if f["rates"] != 0:
-        out.append("Interest rates rising slows borrowing; falling rates boost borrowing.")
-    if f["inflation"] != 0:
-        out.append("Inflation affects prices, purchasing power, and company costs.")
-    if f["gdp"] != 0:
-        out.append("GDP growth reflects the economic cycle: expansion vs recession.")
-    if f["unemployment"] != 0:
-        out.append("Unemployment affects income, spending, and consumer demand.")
-    if f["oil"] != 0:
-        out.append("Oil affects transport, manufacturing, and energy company profits.")
-    if f["geopolitics"] != 0:
-        out.append("Geopolitical tension can increase market risk and volatility.")
-    return out or ["Neutral environment with no major macro pressures."]
+    def label(score):
+        if score <= -3.5:
+            return "Strong Negative"
+        if score <= -1.5:
+            return "Mild Negative"
+        if score < 1.5:
+            return "Neutral / Mixed"
+        if score < 3.5:
+            return "Mild Positive"
+        return "Strong Positive"
 
-st.title("📈 Macro & Markets Explorer")
+    df["Impact Label"] = df["Impact Score"].apply(label)
+    return df
 
-mode = st.sidebar.radio("Choose mode:", ["Pre-set Macro Scenarios", "Build Your Own Scenario"])
 
+# ------------------------------------------------------------
+# Main layout
+# ------------------------------------------------------------
+col_main, col_side = st.columns([3, 1])
+
+with col_main:
+    st.title("Macro & Markets Explorer")
+
+    if mode == "Pre-set Macro Scenarios":
+        st.subheader("Pre-set Macro Scenarios")
+    else:
+        st.subheader("Build Your Own Scenario")
+
+with col_side:
+    st.markdown(
+        """
+        **How to use this app**
+
+        1. Choose a mode on the left.  
+        2. Pick a macro scenario or set your own sliders.  
+        3. Read the sector impact table.  
+        4. Use the chart to compare winners and losers.
+        """
+    )
+
+st.markdown("")  # small spacing
+
+# ------------------------------------------------------------
+# Scenario selection / sliders
+# ------------------------------------------------------------
 if mode == "Pre-set Macro Scenarios":
-    scenario_name = st.sidebar.selectbox("Select a macro scenario:", list(PRESET_SCENARIOS.keys()))
-    scenario = PRESET_SCENARIOS[scenario_name]
-    st.subheader(scenario_name)
-    st.write(scenario["description"])
-    factors = scenario["factors"]
-    df = calculate_sector_scores(factors)
-    st.dataframe(df)
-    st.bar_chart(df.set_index("Sector")["Impact Score"])
+    scenario_name = st.selectbox("Select a macro scenario:", list(preset_scenarios.keys()))
+    scenario = preset_scenarios[scenario_name]
+
+    st.markdown(f"**Scenario: {scenario_name}**")
+    st.markdown(scenario["description"])
+
+    macro_values = scenario["macros"]
+
 else:
-    st.subheader("Build Your Own Scenario")
-    factors = {
-        "rates": st.slider("Interest Rates", -2, 2, 0),
-        "inflation": st.slider("Inflation", -2, 2, 0),
-        "gdp": st.slider("GDP Growth", -2, 2, 0),
-        "unemployment": st.slider("Unemployment", -2, 2, 0),
-        "oil": st.slider("Oil Prices", -2, 2, 0),
-        "geopolitics": st.slider("Geopolitical Tension", 0, 3, 0),
-        "supply_chain": st.slider("Supply Chain Stress", 0, 3, 0),
-        "usd": st.slider("USD Strength", -2, 2, 0),
-        "confidence": st.slider("Consumer Confidence", -2, 2, 0),
-        "commodities": st.slider("Commodity Pressure", -2, 2, 0),
-    }
-    df = calculate_sector_scores(factors)
-    st.dataframe(df)
-    st.bar_chart(df.set_index("Sector")["Impact Score"])
-    st.write("### Explanation")
-    for line in explain_factors(factors):
-        st.write("- " + line)
+    st.markdown("Use the sliders to build your own macro scenario.")
+
+    macro_values = {}
+    # Use columns to keep sliders tidy
+    c1, c2 = st.columns(2)
+    with c1:
+        macro_values["Interest Rates"] = st.slider("Interest Rates", -5, 5, 0)
+        macro_values["GDP Growth"] = st.slider("GDP Growth", -5, 5, 0)
+        macro_values["Oil Prices"] = st.slider("Oil Prices", -5, 5, 0)
+    with c2:
+        macro_values["Inflation"] = st.slider("Inflation", -5, 5, 0)
+        macro_values["Unemployment"] = st.slider("Unemployment", -5, 5, 0)
+        macro_values["Geopolitical Tension"] = st.slider("Geopolitical Tension", -5, 5, 0)
+
+# ------------------------------------------------------------
+# Explain macro variables (tooltips via expander)
+# ------------------------------------------------------------
+with st.expander("What do these macro variables mean?"):
+    st.markdown(
+        """
+        - **Interest Rates** – How expensive it is to borrow money. Higher rates usually slow
+          the economy and hurt growth stocks and housing, but can help banks.
+        - **Inflation** – How quickly prices are rising. High inflation erodes purchasing power
+          and can force central banks to raise interest rates.
+        - **GDP Growth** – How fast the total economy is growing. Strong growth supports
+          corporate earnings; weak growth or negative GDP signals recession risk.
+        - **Unemployment** – The percentage of people without jobs. Rising unemployment usually
+          means weaker demand and pressure on most sectors.
+        - **Oil Prices** – Cost of energy and transportation. High oil prices can help energy
+          companies but hurt transportation and consumer spending.
+        - **Geopolitical Tension** – Wars, conflicts, and international disputes that can disrupt
+          trade, supply chains, and investor confidence.
+        """
+    )
+
+# ------------------------------------------------------------
+# Compute & display sector impacts
+# ------------------------------------------------------------
+df = compute_sector_scores(macro_values)
+
+st.markdown("### Sector Impact Overview")
+
+col_table, col_chart = st.columns([2, 3])
+
+with col_table:
+    st.dataframe(
+        df.style.format({"Impact Score": "{:+.1f}"}),
+        hide_index=True,
+        use_container_width=True,
+    )
+
+with col_chart:
+    chart = (
+        alt.Chart(df)
+        .mark_bar(color=accent_color)
+        .encode(
+            x=alt.X("Sector:N", sort=None),
+            y=alt.Y("Impact Score:Q"),
+            tooltip=["Sector", "Impact Score", "Impact Label"],
+        )
+        .properties(height=350)
+    )
+    st.altair_chart(chart, use_container_width=True)
+
+# ------------------------------------------------------------
+# Summary: winners & losers in plain English
+# ------------------------------------------------------------
+st.markdown("### Summary")
+
+sorted_df = df.sort_values("Impact Score", ascending=False)
+winners = sorted_df.head(2)
+losers = sorted_df.tail(2)
+
+winner_text = ", ".join(f"{row.Sector} ({row['Impact Label']})" for _, row in winners.iterrows())
+loser_text = ", ".join(f"{row.Sector} ({row['Impact Label']})" for _, row in losers.iterrows())
+
+st.markdown(
+    f"""
+    - **Likely winners:** {winner_text}  
+    - **Likely under pressure:** {loser_text}
+    """
+)
+
+# ------------------------------------------------------------
+# Model details (for college / interviewer)
+# ------------------------------------------------------------
+with st.expander("How this model works (for teachers / reviewers)"):
+    st.markdown(
+        """
+        This app is **not** a trading system. It is a learning tool that uses a simple,
+        transparent scoring model:
+
+        1. Each macro variable (interest rates, inflation, etc.) is scaled from **-5** (strong
+           negative shock) to **+5** (strong positive shock).
+        2. For each sector, we assign intuitive **weights** that represent how sensitive that
+           sector is to each macro variable. For example:
+           - Banks have a **positive weight** to interest rates (they often benefit when rates rise).
+           - Tech and Real Estate have **negative weights** to higher interest rates.
+           - Energy has a **strong positive weight** to oil prices.
+        3. The app calculates a raw score for each sector as a weighted sum of macro values, then
+           rescales scores roughly into the range **-5 to +5**.
+        4. Finally, we convert these scores into labels like *Strong Negative*, *Mild Positive*, etc.
+
+        This approach makes the logic easy to explain to students, teachers, or interviewers while
+        still reflecting real economic intuition.
+        """
+    )
