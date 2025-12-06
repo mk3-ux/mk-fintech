@@ -6,5 +6,6 @@ pyarrow
 tornado
 blinker
 markdown-it-py
+openai>=1.40.0
 typing-extensions
 requests
