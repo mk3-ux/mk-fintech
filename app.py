@@ -1,60 +1,50 @@
+# katta_macro_suite.py
 import os
+import io
 import streamlit as st
 import pandas as pd
 import altair as alt
 from groq import Groq
+from fpdf import FPDF
 
-# ------------------------------------------------------------
-# Groq client (expects GROQ_API_KEY in Streamlit Secrets)
-# ------------------------------------------------------------
+# ---------------------------
+# Config / Client
+# ---------------------------
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-MODEL_NAME = "llama-3.1-70b-versatile"  # strong, free Groq model
+MODEL_NAME = "llama-3.1-70b-versatile"
 
 client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
-# ------------------------------------------------------------
-# Page config
-# ------------------------------------------------------------
 st.set_page_config(
-    page_title="Katta Fintech – Macro & Markets Explorer",
+    page_title="Katta MacroSuite – Markets Intelligence",
     layout="wide",
-    page_icon="📈",
+    page_icon="📊",
 )
 
-# --- Light theme styling (clean, centered, no dark mode) ---
+# Light theme colors (simple)
 COLORS = {
-    "bg": "#F8FAFF",
+    "bg": "#F7FAFF",
     "text": "#0F172A",
     "card": "#FFFFFF",
-    "accent": "#1D4ED8",
-    "subtle": "#E5E7EB",
+    "accent": "#0EA5E9",
+    "subtle": "#E6EEF8",
 }
 
+# Small CSS polish
 st.markdown(
     f"""
     <style>
-        .stApp {{
-            background-color: {COLORS['bg']};
-            color: {COLORS['text']};
-        }}
-        .block-container {{
-            max-width: 1200px;
-            padding-top: 2rem;
-            padding-bottom: 3rem;
-        }}
-        /* Softer tabs */
-        button[data-baseweb="tab"] {{
-            border-radius: 999px !important;
-            padding: 0.3rem 1.2rem !important;
-        }}
+        .stApp {{ background-color: {COLORS['bg']}; color: {COLORS['text']}; }}
+        .block-container {{ max-width: 1200px; padding-top: 1.2rem; padding-bottom: 2rem; }}
+        button[data-baseweb="tab"] {{ border-radius: 999px !important; padding: 0.3rem 1rem !important; }}
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-# ------------------------------------------------------------
-# Macro data + weights
-# ------------------------------------------------------------
+# ---------------------------
+# Model / Data definitions
+# ---------------------------
 macro_variables = [
     "Interest Rates",
     "Inflation",
@@ -77,9 +67,8 @@ sectors = [
 preset_scenarios = {
     "Rate Hike (Tightening Cycle)": {
         "description": (
-            "Central banks raise interest rates to cool the economy or fight inflation. "
-            "Growth and rate-sensitive stocks (Tech, Real Estate, Luxury) may struggle, "
-            "while banks can benefit from higher net interest margins."
+            "Central banks raise interest rates to cool activity. Rate-sensitive, long-duration"
+            " assets may be pressured while financials can benefit from wider margins."
         ),
         "macros": {
             "Interest Rates": 4,
@@ -92,8 +81,8 @@ preset_scenarios = {
     },
     "High Inflation Environment": {
         "description": (
-            "Prices are rising quickly. Consumers feel pressure, and sectors with pricing power "
-            "or real assets may hold up relatively better."
+            "Persistent inflation drives pricing pressure. Real-asset sectors and commodity"
+            " sensitive sectors may outpace others."
         ),
         "macros": {
             "Interest Rates": 2,
@@ -106,8 +95,8 @@ preset_scenarios = {
     },
     "Recession / Slowdown": {
         "description": (
-            "Economic growth slows or turns negative. Unemployment rises, and investors rotate "
-            "into defensive, lower-volatility sectors."
+            "Growth contraction with rising unemployment. Defensive sectors and credit-sensitive"
+            " exposures are important to monitor."
         ),
         "macros": {
             "Interest Rates": -1,
@@ -120,8 +109,8 @@ preset_scenarios = {
     },
     "Oil & Geopolitics Shock": {
         "description": (
-            "Oil prices spike after a supply shock or conflict. Energy stocks may rally, while "
-            "transportation, airlines, and some consumer segments face margin pressure."
+            "Supply shock raises oil and commodity prices; energy benefits but many sectors face"
+            " cost pressure."
         ),
         "macros": {
             "Interest Rates": 1,
@@ -193,22 +182,26 @@ weights = {
     },
 }
 
-# ------------------------------------------------------------
+# ---------------------------
 # Helpers
-# ------------------------------------------------------------
+# ---------------------------
 def compute_sector_scores(macro_values: dict) -> pd.DataFrame:
     rows = []
     for sector in sectors:
         score = 0.0
         for macro in macro_variables:
-            score += weights[sector][macro] * macro_values[macro]
-        rows.append({"Sector": sector, "Impact Score": score})
+            score += weights[sector][macro] * macro_values.get(macro, 0)
+        rows.append({"Sector": sector, "Raw Score": score})
 
     df = pd.DataFrame(rows)
-    max_abs = df["Impact Score"].abs().max()
-    if max_abs > 0:
-        df["Impact Score"] = df["Impact Score"] / max_abs * 5
-    df["Impact Score"] = df["Impact Score"].round(1)
+    max_abs = df["Raw Score"].abs().max()
+    # normalize to +/-5 scale (keep zero-handling)
+    if max_abs and max_abs > 0:
+        df["Impact Score"] = df["Raw Score"] / max_abs * 5
+    else:
+        df["Impact Score"] = 0.0
+
+    df["Impact Score"] = df["Impact Score"].round(2)
 
     def label(score):
         if score <= -3.5:
@@ -216,43 +209,60 @@ def compute_sector_scores(macro_values: dict) -> pd.DataFrame:
         if score <= -1.5:
             return "Mild Negative"
         if score < 1.5:
-            return "Neutral / Mixed"
+            return "Neutral"
         if score < 3.5:
             return "Mild Positive"
         return "Strong Positive"
 
     df["Impact Label"] = df["Impact Score"].apply(label)
-    return df
+    return df[["Sector", "Impact Score", "Impact Label"]]
 
 
-def call_ai_chat(history, user_text: str, level: str) -> str:
-    """Call Groq Llama 3.1 as a finance tutor (concepts only, no advice)."""
+def compute_portfolio_exposure(portfolio_df: pd.DataFrame, sector_scores: pd.DataFrame):
+    """
+    Expects portfolio_df with columns: Sector, Allocation (as percent or fraction)
+    Returns weighted exposure and breakdown.
+    """
+    df = portfolio_df.copy()
+    # normalize allocation
+    if "Allocation" not in df.columns:
+        raise ValueError("Uploaded portfolio must contain 'Allocation' column")
+    total = df["Allocation"].sum()
+    if total == 0:
+        df["Weight"] = 0.0
+    else:
+        df["Weight"] = df["Allocation"] / total
+
+    merged = df.merge(sector_scores, left_on="Sector", right_on="Sector", how="left")
+    merged["Impact Score"].fillna(0.0, inplace=True)
+    merged["Weighted Impact"] = merged["Weight"] * merged["Impact Score"]
+    portfolio_score = merged["Weighted Impact"].sum()
+    return portfolio_score, merged[["Sector", "Allocation", "Weight", "Impact Score", "Weighted Impact"]]
+
+
+def call_ai_research(history, user_text: str, level: str = "Professional") -> str:
+    """Call Groq Llama as a corporate research analyst (concepts, narratives)."""
     if client is None:
         return (
-            "The AI tutor is not configured yet. Please add GROQ_API_KEY in Secrets on "
-            "Streamlit Cloud and reboot the app."
+            "AI Research Analyst not configured. Set GROQ_API_KEY in environment or Streamlit Secrets."
         )
-
     level_line = {
-        "Beginner": "Explain everything in simple, high-school friendly language.",
-        "Intermediate": "Use some finance vocabulary, but stay clear and structured.",
-        "Advanced": "You may use more technical finance language and deeper concepts.",
-    }.get(level, "Explain in clear, student-friendly language.")
+        "Professional": "Write as a corporate research analyst for internal use, concise and structured.",
+        "Executive": "Write a polished executive summary for C-suite consumption, ~3 paragraphs.",
+        "Technical": "Write a detailed technical memo with supporting reasoning and caveats.",
+    }.get(level, "Write in clear professional language.")
 
     system_prompt = (
-        "You are a calm, clear stock market and finance tutor. "
-        "You explain concepts about stocks, ETFs, sectors, risk, diversification, "
-        "macro environments, and long-term investing. "
-        "You do NOT give personalized financial advice, do NOT say 'buy' or 'sell' "
-        "any specific security, and you do NOT claim to know current or future prices. "
-        "Focus on education, frameworks, analogies, and examples for students. "
+        "You are an internal AI research analyst for an institutional client. "
+        "Your task: convert macro inputs and scenario outputs into concise internal research narratives, "
+        "scenario summaries, risk notes and suggested topics for internal follow-up. "
+        "You MUST NOT provide direct buy/sell recommendations, price targets or personalized investment advice. "
         + level_line
     )
 
-    messages = [
-        {"role": "system", "content": system_prompt},
-    ]
-    for m in history[-8:]:
+    messages = [{"role": "system", "content": system_prompt}]
+    # include limited history
+    for m in history[-6:]:
         messages.append({"role": m["role"], "content": m["content"]})
     messages.append({"role": "user", "content": user_text})
 
@@ -261,61 +271,66 @@ def call_ai_chat(history, user_text: str, level: str) -> str:
             model=MODEL_NAME,
             messages=messages,
             max_tokens=700,
-            temperature=0.4,
+            temperature=0.2,
         )
         return completion.choices[0].message.content.strip()
     except Exception as e:
-        return f"Sorry, I ran into an error talking to the AI service: `{e}`"
+        return f"AI service error: {e}"
 
 
+def create_pdf_report(title: str, scenario_name: str, macro_vals: dict, sector_df: pd.DataFrame, portfolio_table: pd.DataFrame = None, ai_summary: str = ""):
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=12)
+    pdf.add_page()
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.cell(0, 10, title, ln=True, align="L")
+    pdf.set_font("Helvetica", "", 11)
+    pdf.cell(0, 8, f"Scenario: {scenario_name}", ln=True)
+    pdf.ln(4)
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 8, "Macro Inputs:", ln=True)
+    pdf.set_font("Helvetica", "", 11)
+    for k, v in macro_vals.items():
+        pdf.cell(0, 7, f"{k}: {v}", ln=True)
+    pdf.ln(4)
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 8, "Sector Impacts:", ln=True)
+    pdf.set_font("Helvetica", "", 11)
+    for _, r in sector_df.iterrows():
+        pdf.cell(0, 7, f"{r['Sector']}: {r['Impact Score']} ({r['Impact Label']})", ln=True)
+    pdf.ln(4)
+    if portfolio_table is not None and not portfolio_table.empty:
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.cell(0, 8, "Portfolio Exposure (sample):", ln=True)
+        pdf.set_font("Helvetica", "", 10)
+        for _, r in portfolio_table.iterrows():
+            pdf.cell(0, 6, f"{r['Sector']}: Allocation {r['Allocation']}, WeightedImpact {r['Weighted Impact']:.3f}", ln=True)
+        pdf.ln(4)
+    if ai_summary:
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.cell(0, 8, "AI Research Summary:", ln=True)
+        pdf.set_font("Helvetica", "", 10)
+        # wrap lines simply
+        for line in ai_summary.split("\n"):
+            pdf.multi_cell(0, 6, line)
+    # return bytes
+    return pdf.output(dest="S").encode("latin-1")
+
+
+# ---------------------------
+# UI Rendering
+# ---------------------------
 def render_header():
-    # Gradient pill with logo + title (no "student project" label)
     st.markdown(
         f"""
-        <div style="
-            background: linear-gradient(90deg, #E0ECFF, #F5F3FF);
-            border-radius: 18px;
-            padding: 1.1rem 1.5rem;
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-            border: 1px solid {COLORS['subtle']};
-            box-shadow: 0 10px 25px rgba(15,23,42,0.06);
-            margin-bottom: 1.3rem;
-        ">
-          <div style="flex:0 0 auto;">
-        """,
-        unsafe_allow_html=True,
-    )
-
-    # Logo: use file if present, else KF badge
-    if os.path.exists("logo.png"):
-        st.image("logo.png", width=64)
-    else:
-        st.markdown(
-            f"""
-            <div style="
-                width:64px;height:64px;border-radius:18px;
-                background:{COLORS['accent']};
-                display:flex;align-items:center;justify-content:center;
-                color:white;font-weight:800;font-size:26px;
-            ">
-              KF
+        <div style="background:linear-gradient(90deg,#ECFEFF,#F0F9FF);padding:12px;border-radius:14px;border:1px solid {COLORS['subtle']};margin-bottom:14px;">
+          <div style="display:flex;align-items:center;gap:12px;">
+            <div style="width:56px;height:56px;border-radius:12px;background:{COLORS['accent']};color:white;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:20px;">
+              KM
             </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    st.markdown(
-        f"""
-          </div>
-          <div style="flex:1 1 auto;">
-            <div style="font-size:1.7rem;font-weight:800;color:{COLORS['text']};">
-              Katta Fintech – Macro & Markets Explorer
-            </div>
-            <div style="font-size:0.95rem;color:#4B5563;">
-              Explore how different market environments can influence stock sectors,
-              and use the built-in AI tutor to practice explaining your reasoning.
+            <div>
+              <div style="font-size:18px;font-weight:800;color:{COLORS['text']};">Katta MacroSuite — Markets Intelligence</div>
+              <div style="font-size:12px;color:#475569;">Scenario analysis • Sector sensitivity • Portfolio exposure • Internal research automation</div>
             </div>
           </div>
         </div>
@@ -323,197 +338,160 @@ def render_header():
         unsafe_allow_html=True,
     )
 
-
-# ------------------------------------------------------------
-# Sidebar
-# ------------------------------------------------------------
-with st.sidebar:
-    st.title("Katta Fintech")
-    level = st.radio(
-        "Explanation level for the AI tutor:",
-        ["Beginner", "Intermediate", "Advanced"],
-        index=0,
-    )
-    st.markdown("---")
-    st.markdown(
-        """
-        **What this app demonstrates**
-
-        - Macro → sector intuition  
-        - Interactive charts  
-        - AI finance tutor (Groq Llama 3.1)  
-        - Clean Streamlit UI
-        """
-    )
-
-# ------------------------------------------------------------
-# Layout
-# ------------------------------------------------------------
 render_header()
 
-tab_explorer, tab_chat, tab_learn = st.tabs(
-    ["📊 Sector & Scenario Explorer", "🤖 Finance Tutor", "📚 Learning Lab"]
+with st.sidebar:
+    st.title("Katta MacroSuite")
+    ai_level = st.radio("AI output style:", ["Professional", "Executive", "Technical"], index=0)
+    st.markdown("---")
+    if client is None:
+        st.warning("Groq API not configured — AI Research Analyst disabled until GROQ_API_KEY is set.")
+    st.markdown("Upload a CSV portfolio (columns: Sector, Allocation). Allocation can be percent or units.")
+    st.markdown("---")
+    st.caption("This platform is a decision-support tool. It does NOT provide buy/sell advice.")
+
+# Main tabs
+tab_explorer, tab_portfolio, tab_ai, tab_reports = st.tabs(
+    ["Scenario Explorer", "Portfolio Analyzer", "AI Research Analyst", "Generate Report"]
 )
 
-# ------------ TAB 1: Explorer ------------
+# ---------- Explorer Tab ----------
 with tab_explorer:
-    st.subheader("How different environments might influence stock sectors")
-
-    mode = st.radio(
-        "Choose mode:",
-        ["Pre-set Market Environments", "Build Your Own Scenario"],
-        horizontal=True,
-    )
-
-    if mode == "Pre-set Market Environments":
-        scenario_name = st.selectbox("Select a market environment:", list(preset_scenarios.keys()))
+    st.subheader("Scenario Explorer — Macro → Sector Sensitivity")
+    mode = st.radio("Mode", ["Preset Scenarios", "Custom"], horizontal=True)
+    if mode == "Preset Scenarios":
+        scenario_name = st.selectbox("Choose scenario:", list(preset_scenarios.keys()))
         scenario = preset_scenarios[scenario_name]
-        st.markdown(f"### {scenario_name}")
-        st.markdown(scenario["description"])
-        macro_values = scenario["macros"]
+        st.markdown(f"**{scenario_name}** — {scenario['description']}")
+        macro_values = scenario["macros"].copy()
     else:
-        st.markdown("### Build your own environment")
-        st.caption("Move the sliders and imagine the kind of headlines you might see in the news.")
+        st.markdown("Build a custom macro scenario (range -5 to +5)")
         macro_values = {}
         c1, c2 = st.columns(2)
         with c1:
-            macro_values["Interest Rates"] = st.slider("Interest Rates (tight → loose)", -5, 5, 0)
-            macro_values["GDP Growth"] = st.slider("GDP Growth (weak → strong)", -5, 5, 0)
-            macro_values["Oil Prices"] = st.slider("Oil Prices (low → high)", -5, 5, 0)
+            macro_values["Interest Rates"] = st.slider("Interest Rates", -5, 5, 0)
+            macro_values["GDP Growth"] = st.slider("GDP Growth", -5, 5, 0)
+            macro_values["Oil Prices"] = st.slider("Oil Prices", -5, 5, 0)
         with c2:
-            macro_values["Inflation"] = st.slider("Inflation (low → high)", -5, 5, 0)
-            macro_values["Unemployment"] = st.slider("Unemployment (low → high)", -5, 5, 0)
+            macro_values["Inflation"] = st.slider("Inflation", -5, 5, 0)
+            macro_values["Unemployment"] = st.slider("Unemployment", -5, 5, 0)
             macro_values["Geopolitical Tension"] = st.slider("Geopolitical Tension", -5, 5, 0)
+        scenario_name = "Custom"
 
-    df = compute_sector_scores(macro_values)
-
-    col_table, col_chart = st.columns([2, 3])
-
-    with col_table:
-        st.markdown("#### Sector impact overview")
-        st.dataframe(
-            df.style.format({"Impact Score": "{:+.1f}"}),
-            hide_index=True,
-            use_container_width=True,
-        )
-
-    with col_chart:
-        st.markdown("#### Visual impact by sector")
-        chart = (
-            alt.Chart(df)
-            .mark_bar(color=COLORS["accent"])
-            .encode(
-                x=alt.X("Sector:N", sort=None),
-                y=alt.Y("Impact Score:Q"),
-                tooltip=["Sector", "Impact Score", "Impact Label"],
-            )
-            .properties(height=360)
-        )
+    sector_df = compute_sector_scores(macro_values)
+    col1, col2 = st.columns([2, 3])
+    with col1:
+        st.markdown("#### Sector Impact Overview")
+        st.dataframe(sector_df.style.format({"Impact Score": "{:+.2f}"}), use_container_width=True, hide_index=True)
+    with col2:
+        st.markdown("#### Visual Overview")
+        chart = alt.Chart(sector_df).mark_bar().encode(
+            x=alt.X("Sector:N", sort=None),
+            y=alt.Y("Impact Score:Q"),
+            tooltip=["Sector", "Impact Score", "Impact Label"]
+        ).properties(height=360)
         st.altair_chart(chart, use_container_width=True)
 
-    st.markdown("#### Quick verbal summary")
-    sorted_df = df.sort_values("Impact Score", ascending=False)
+    st.markdown("#### Quick take")
+    sorted_df = sector_df.sort_values("Impact Score", ascending=False)
     winners = sorted_df.head(2)
     losers = sorted_df.tail(2)
-
     winner_text = ", ".join(f"{row.Sector} ({row['Impact Label']})" for _, row in winners.iterrows())
     loser_text = ", ".join(f"{row.Sector} ({row['Impact Label']})" for _, row in losers.iterrows())
+    st.markdown(f"- **Likely relative winners:** {winner_text}  \n- **Facing headwinds:** {loser_text}")
+    st.caption("Model is a simplified decision-support tool — not investment advice.")
 
-    st.markdown(
-        f"""
-        - **Likely relative winners:** {winner_text}  
-        - **Facing more headwinds:** {loser_text}
-        """
-    )
-    st.caption(
-        "This is a simplified educational model – not investment advice or a trading system."
-    )
+# ---------- Portfolio Analyzer ----------
+with tab_portfolio:
+    st.subheader("Portfolio / Revenue Exposure Analyzer")
+    st.markdown("Upload a CSV with columns: `Sector`, `Allocation` (percent or units).")
+    uploaded = st.file_uploader("Upload portfolio CSV", type=["csv"])
+    sample = st.button("Download sample CSV")
+    if sample:
+        sample_df = pd.DataFrame({"Sector": sectors, "Allocation": [0]*len(sectors)})
+        csv_bytes = sample_df.to_csv(index=False).encode("utf-8")
+        st.download_button("Download sample CSV", csv_bytes, file_name="portfolio_sample.csv")
 
-# ------------ TAB 2: Finance Tutor ------------
-with tab_chat:
-    st.subheader("Ask the Finance Tutor (concepts only)")
+    portfolio_df = None
+    if uploaded is not None:
+        try:
+            portfolio_df = pd.read_csv(uploaded)
+            st.write("Uploaded portfolio preview:")
+            st.dataframe(portfolio_df.head(20), use_container_width=True)
+        except Exception as e:
+            st.error(f"Error reading CSV: {e}")
 
-    st.markdown(
-        """
-        Ask about **stocks, ETFs, sectors, diversification, risk, or macro environments**.  
-        The tutor explains ideas and frameworks, but does **not** tell you what to buy or sell.
-        """
-    )
+    if st.button("Analyze current scenario exposure"):
+        # require sector_df from last tab: recompute if needed
+        if 'sector_df' not in locals():
+            sector_df = compute_sector_scores(macro_values)
+        if portfolio_df is None:
+            st.error("Please upload a portfolio CSV first.")
+        else:
+            try:
+                score, breakdown = compute_portfolio_exposure(portfolio_df, sector_df)
+                st.metric("Portfolio Weighted Impact Score", f"{score:.3f}")
+                st.markdown("Breakdown:")
+                st.dataframe(breakdown, use_container_width=True)
 
-    if "chat_messages" not in st.session_state:
-        st.session_state.chat_messages = []
+                # simple interpretation
+                if score > 1.5:
+                    st.success("Portfolio tilt: Mild to strong positive sensitivity to the scenario.")
+                elif score < -1.5:
+                    st.warning("Portfolio tilt: Mild to strong negative sensitivity to the scenario.")
+                else:
+                    st.info("Portfolio tilt: Largely neutral under the chosen scenario.")
+            except Exception as e:
+                st.error(f"Analysis error: {e}")
 
-    # Sample prompts as buttons
-    st.markdown("**Try a quick prompt:**")
-    c1, c2, c3 = st.columns(3)
-    sample_q = None
-    if c1.button("📦 What is an ETF?"):
-        sample_q = "Explain what an ETF is to a high-school student."
-    if c2.button("📉 Rate hikes & growth stocks"):
-        sample_q = "Why do rising interest rates often hurt growth stocks like tech?"
-    if c3.button("🛡️ Diversification"):
-        sample_q = "What does diversification mean in investing, and why does it matter?"
+# ---------- AI Research Analyst ----------
+with tab_ai:
+    st.subheader("AI Research Analyst — Generate internal narratives")
+    st.markdown("Draft internal memos, scenario summaries, and risk notes. (AI must be configured.)")
 
-    user_input = st.chat_input("Type your question here...")
-    if sample_q and not user_input:
-        user_input = sample_q
+    if "ai_history" not in st.session_state:
+        st.session_state.ai_history = []
 
-    # Show chat history
-    for msg in st.session_state.chat_messages:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+    user_q = st.text_area("Ask the AI Research Analyst (e.g., 'Write an executive summary of this scenario')", height=120)
+    ai_style = st.selectbox("AI style", ["Professional", "Executive", "Technical"], index=0)
+    if st.button("Run AI"):
+        if client is None:
+            st.error("AI not configured. Set GROQ_API_KEY.")
+        else:
+            # include basic context: scenario + top sector impacts
+            context = f"Scenario: {scenario_name}\nMacro inputs: {macro_values}\nTop sector impacts:\n"
+            top_n = sector_df.sort_values("Impact Score", ascending=False).head(3)
+            for _, r in top_n.iterrows():
+                context += f"- {r['Sector']}: {r['Impact Score']} ({r['Impact Label']})\n"
+            prompt = context + "\nUser request:\n" + user_q
+            st.session_state.ai_history.append({"role": "user", "content": prompt})
+            with st.spinner("Generating AI summary..."):
+                out = call_ai_research(st.session_state.ai_history, prompt, ai_style)
+            st.markdown("**AI output**")
+            st.markdown(out)
+            st.session_state.ai_history.append({"role": "assistant", "content": out})
+            # prune
+            st.session_state.ai_history = st.session_state.ai_history[-20:]
 
-    if user_input:
-        st.session_state.chat_messages.append({"role": "user", "content": user_input})
-        with st.chat_message("user"):
-            st.markdown(user_input)
+# ---------- Report Generation ----------
+with tab_reports:
+    st.subheader("Generate Downloadable Report")
+    report_title = st.text_input("Report title", "Macro & Portfolio Insight")
+    include_portfolio = st.checkbox("Include uploaded portfolio exposure", value=True)
+    ai_summary_for_report = st.text_area("Optional: paste AI summary to include in report", height=120)
+    if st.button("Create PDF Report"):
+        # ensure sector_df exists
+        sector_df = compute_sector_scores(macro_values)
+        portfolio_table = None
+        if include_portfolio and uploaded is not None:
+            try:
+                _, portfolio_table = compute_portfolio_exposure(pd.read_csv(uploaded), sector_df)
+            except Exception as e:
+                st.error(f"Cannot include portfolio: {e}")
+                portfolio_table = None
+        pdf_bytes = create_pdf_report(report_title, scenario_name, macro_values, sector_df, portfolio_table, ai_summary_for_report)
+        st.download_button("Download PDF report", data=pdf_bytes, file_name="katta_report.pdf", mime="application/pdf")
 
-        with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                reply = call_ai_chat(st.session_state.chat_messages, user_input, level)
-                st.markdown(reply)
-
-        st.session_state.chat_messages.append({"role": "assistant", "content": reply})
-
-# ------------ TAB 3: Learning Lab ------------
-with tab_learn:
-    st.subheader("Learning Lab – How this app works")
-
-    st.markdown(
-        """
-        This app is meant to help you **connect big-picture news to sector-level market moves**, and
-        to practice talking through your reasoning the way an analyst might.
-        """
-    )
-
-    st.markdown("#### 1. Macro → sector intuition")
-    st.markdown(
-        """
-        - Changes in **interest rates, inflation, growth, unemployment, oil, and geopolitics**
-          don't move all stocks the same way.  
-        - Investors often talk in terms of **sectors** (Tech, Banks, Energy, etc.).  
-        - This app encodes a simple rule-of-thumb model for how each sector *might* react.
-        """
-    )
-
-    st.markdown("#### 2. Educational model, not a forecast")
-    st.markdown(
-        """
-        - The scores here are **normalized impact scores**, not price targets or return forecasts.  
-        - The goal is for you to practice *explaining stories* like:  
-          *\"In a rate-hike environment, banks may benefit but growth stocks can be under pressure.\"*  
-        - Real markets are messier and sometimes behave differently than textbook logic.
-        """
-    )
-
-    st.markdown("#### 3. How you might describe this project")
-    st.markdown(
-        """
-        *\"Built an interactive Macro & Markets Explorer web app in Python/Streamlit that models
-        how different macroeconomic environments can affect stock market sectors.  
-        Integrated a Groq Llama 3.1–powered finance tutor that explains concepts like sectors,
-        ETFs, diversification, and rate hikes in student-friendly language.  
-        Designed the app to help classmates experiment with scenarios and practice explaining
-        their reasoning like a junior portfolio manager.\"*
-        """
-    )
+# Footer / notes
+st.markdown("---")
+st.caption("Katta MacroSuite — decision-support analytics. Not investment advice. For internal corporate use.")
