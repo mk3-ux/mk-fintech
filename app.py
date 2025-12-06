@@ -10,7 +10,7 @@ import google.generativeai as genai
 # ------------------------------------------------------------
 GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY")
 
-MODEL_NAME = "gemini-pro"  # if 404, change to "gemini-pro"
+MODEL_NAME = "gemini-1.5-flash"  # if 404, change to "gemini-pro"
 
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
