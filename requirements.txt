@@ -6,6 +6,6 @@ pyarrow
 tornado
 blinker
 markdown-it-py
-openai>=1.40.0
+google-generativeai>=0.7.0
 typing-extensions
 requests
