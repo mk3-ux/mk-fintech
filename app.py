@@ -6,48 +6,59 @@ import altair as alt
 import google.generativeai as genai
 
 # ------------------------------------------------------------
-# Gemini client (expects GOOGLE_API_KEY in env / Streamlit secrets)
+# Gemini client (expects GOOGLE_API_KEY in Streamlit Secrets)
 # ------------------------------------------------------------
 GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY")
+
+MODEL_NAME = "gemini-1.5-flash-latest"  # if 404, change to "gemini-pro"
+
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
-    gemini_model = genai.GenerativeModel("gemini-1.5-flash")
+    try:
+        gemini_model = genai.GenerativeModel(MODEL_NAME)
+    except Exception:
+        gemini_model = None
 else:
     gemini_model = None
-
 
 # ------------------------------------------------------------
 # Page config
 # ------------------------------------------------------------
 st.set_page_config(
-    page_title="Katta Fintech – Sector & Stock Explorer",
+    page_title="Katta Fintech – Macro & Markets Explorer",
     layout="wide",
     page_icon="📈",
 )
 
+# --- Light theme colors (no dark mode toggle) ---
+COLORS = {
+    "bg": "#F8FAFF",
+    "text": "#0F172A",
+    "card": "#FFFFFF",
+    "accent": "#1D4ED8",
+    "subtle": "#E5E7EB",
+}
+
+# Global background style (soft, centered layout)
+st.markdown(
+    f"""
+    <style>
+        .stApp {{
+            background-color: {COLORS['bg']};
+            color: {COLORS['text']};
+        }}
+        .block-container {{
+            max-width: 1200px;
+            padding-top: 2rem;
+            padding-bottom: 3rem;
+        }}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 # ------------------------------------------------------------
-# Theming helpers
-# ------------------------------------------------------------
-def get_theme_colors(dark_mode: bool):
-    if dark_mode:
-        return {
-            "bg": "#020617",
-            "text": "#E5E7EB",
-            "card": "#0F172A",
-            "accent": "#38BDF8",
-        }
-    else:
-        return {
-            "bg": "#F8FAFF",
-            "text": "#0F172A",
-            "card": "#FFFFFF",
-            "accent": "#1D4ED8",
-        }
-
-
-# ------------------------------------------------------------
-# Data for macro → sector model
+# Macro data + weights
 # ------------------------------------------------------------
 macro_variables = [
     "Interest Rates",
@@ -68,7 +79,6 @@ sectors = [
     "Banks",
 ]
 
-# Pre-set environments the user can choose
 preset_scenarios = {
     "Rate Hike (Tightening Cycle)": {
         "description": (
@@ -129,7 +139,6 @@ preset_scenarios = {
     },
 }
 
-# How each macro affects each sector (sign + strength)
 weights = {
     "Tech": {
         "Interest Rates": -1.6,
@@ -189,12 +198,10 @@ weights = {
     },
 }
 
-
 # ------------------------------------------------------------
-# Utility functions
+# Helpers
 # ------------------------------------------------------------
 def compute_sector_scores(macro_values: dict) -> pd.DataFrame:
-    """Compute impact score for each sector based on macro sliders and weights."""
     rows = []
     for sector in sectors:
         score = 0.0
@@ -227,14 +234,14 @@ def call_ai_chat(history, user_text: str, level: str) -> str:
     """Call Gemini with a stock/finance educational assistant."""
     if gemini_model is None:
         return (
-            "The AI chatbot is not configured yet. Please add GOOGLE_API_KEY to the "
-            "Streamlit app secrets in Streamlit Cloud."
+            "The AI chatbot is not configured correctly yet. "
+            "Make sure GOOGLE_API_KEY is set in Secrets and the model name is valid."
         )
 
     level_line = {
         "Beginner": "Explain everything in simple, high-school friendly language.",
         "Intermediate": "Use some financial vocabulary, but still be clear and structured.",
-        "Advanced": "Feel free to use more technical finance language and deeper concepts.",
+        "Advanced": "You may use more technical finance language and deeper concepts.",
     }.get(level, "Explain in clear, student-friendly language.")
 
     system_prompt = (
@@ -263,134 +270,100 @@ def call_ai_chat(history, user_text: str, level: str) -> str:
         return f"Sorry, I ran into an error talking to the AI service: `{e}`"
 
 
-def render_header(colors):
-    """Top logo & title bar."""
-    col_logo, col_title, col_badge = st.columns([1, 4, 2])
+def render_header():
+    # soft pill card with logo + title
+    st.markdown(
+        f"""
+        <div style="
+            background: linear-gradient(90deg, #E0ECFF, #F5F3FF);
+            border-radius: 18px;
+            padding: 1.1rem 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            border: 1px solid {COLORS['subtle']};
+            box-shadow: 0 10px 25px rgba(15,23,42,0.06);
+            margin-bottom: 1.3rem;
+        ">
+          <div style="flex:0 0 auto;">
+        """,
+        unsafe_allow_html=True,
+    )
 
-    with col_logo:
-        if os.path.exists("logo.png"):
-            st.image("logo.png", width=72)
-        else:
-            st.markdown(
-                f"""
-                <div style="
-                    width:64px;height:64px;border-radius:18px;
-                    background:{colors['accent']};
-                    display:flex;align-items:center;justify-content:center;
-                    color:white;font-weight:800;font-size:26px;
-                    box-shadow:0 6px 16px rgba(0,0,0,0.18);
-                ">
-                  KF
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-    with col_title:
+    # logo
+    if os.path.exists("logo.png"):
+        st.image("logo.png", width=64)
+    else:
         st.markdown(
             f"""
-            <div style="padding-top:0.2rem;">
-              <div style="font-size:1.8rem;font-weight:800;color:{colors['text']};">
-                Macro & Markets Explorer
-              </div>
-              <div style="font-size:0.95rem;color:#6B7280;">
-                A Katta Fintech project – exploring how macro environments can influence stock sectors.
-              </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    with col_badge:
-        st.markdown(
-            """
             <div style="
-                margin-top:0.4rem;
-                padding:0.5rem 0.75rem;
-                border-radius:999px;
-                background:rgba(34,197,94,0.08);
-                color:#16A34A;
-                font-size:0.8rem;
-                font-weight:600;
-                text-align:right;
+                width:64px;height:64px;border-radius:18px;
+                background:{COLORS['accent']};
+                display:flex;align-items:center;justify-content:center;
+                color:white;font-weight:800;font-size:26px;
             ">
-              Student project · Educational only
+              KF
             </div>
             """,
             unsafe_allow_html=True,
         )
-    st.markdown("<hr style='margin:0.6rem 0 0.4rem 0;'>", unsafe_allow_html=True)
+
+    st.markdown(
+        f"""
+          </div>
+          <div style="flex:1 1 auto;">
+            <div style="font-size:1.7rem;font-weight:800;color:{COLORS['text']};">
+              Macro & Markets Explorer
+            </div>
+            <div style="font-size:0.95rem;color:#4B5563;">
+              A Katta Fintech project – exploring how macro environments can influence stock sectors,
+              with an educational AI finance tutor.
+            </div>
+          </div>
+          <div style="flex:0 0 auto;font-size:0.78rem;color:#047857;
+                      background:#DCFCE7;border-radius:999px;padding:0.45rem 0.9rem;">
+            Student project · Educational only
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 # ------------------------------------------------------------
-# Sidebar controls
+# Sidebar (only level selector now)
 # ------------------------------------------------------------
-st.sidebar.title("Katta Fintech")
+with st.sidebar:
+    st.title("Katta Fintech")
+    level = st.radio(
+        "Explanation level for the AI tutor:",
+        ["Beginner", "Intermediate", "Advanced"],
+        index=0,
+    )
+    st.markdown("---")
+    st.markdown(
+        """
+        **What this app shows**
 
-dark_mode = st.sidebar.checkbox("🌙 Dark mode", value=False)
-colors = get_theme_colors(dark_mode)
-
-# Global background style
-st.markdown(
-    f"""
-    <style>
-        .stApp {{
-            background-color: {colors['bg']};
-            color: {colors['text']};
-        }}
-        .block-container {{
-            padding-top: 1.2rem;
-            padding-bottom: 2rem;
-        }}
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-level = st.sidebar.radio("Explanation level", ["Beginner", "Intermediate", "Advanced"], index=0)
-
-st.sidebar.markdown("---")
-st.sidebar.markdown(
-    """
-    **For applications 👇**
-
-    This app shows:
-    - Data visualization
-    - Macro & sector reasoning
-    - AI integration (Gemini)
-    - Clean UI/UX in Streamlit
-    """
-)
+        - Macro → sector intuition  
+        - Interactive charts  
+        - AI finance tutor (Gemini)  
+        - Clean student-built UI
+        """
+    )
 
 # ------------------------------------------------------------
 # Layout
 # ------------------------------------------------------------
-render_header(colors)
+render_header()
 
 tab_explorer, tab_chat, tab_learn = st.tabs(
     ["📊 Sector & Scenario Explorer", "🤖 Finance Chatbot", "📚 Learning Center"]
 )
 
-
-# ------------------------------------------------------------
-# TAB 1 – Explorer
-# ------------------------------------------------------------
+# ------------ TAB 1: Explorer ------------
 with tab_explorer:
-    col_main, col_side = st.columns([3, 1.4])
-
-    with col_main:
-        st.subheader("How different environments might influence stock sectors")
-
-    with col_side:
-        st.markdown(
-            """
-            **How to use**
-
-            1. Pick a pre-set environment, or build your own.
-            2. See the **impact score** for each sector.
-            3. Practice explaining the story in words.
-            """
-        )
+    st.subheader("How different environments might influence stock sectors")
 
     mode = st.radio(
         "Choose mode:",
@@ -401,7 +374,6 @@ with tab_explorer:
     if mode == "Pre-set Market Environments":
         scenario_name = st.selectbox("Select a market environment:", list(preset_scenarios.keys()))
         scenario = preset_scenarios[scenario_name]
-
         st.markdown(f"### {scenario_name}")
         st.markdown(scenario["description"])
         macro_values = scenario["macros"]
@@ -419,25 +391,12 @@ with tab_explorer:
             macro_values["Unemployment"] = st.slider("Unemployment (low → high)", -5, 5, 0)
             macro_values["Geopolitical Tension"] = st.slider("Geopolitical Tension", -5, 5, 0)
 
-    with st.expander("What do these sliders roughly mean for markets?"):
-        st.markdown(
-            """
-            - **Interest Rates** – Higher rates usually pressure growth stocks and real estate, but can help banks.  
-            - **Inflation** – High inflation hurts bonds and some consumers, but can help real assets.  
-            - **GDP Growth** – Strong growth supports cyclical sectors; weak growth favors defensives.  
-            - **Unemployment** – Rising unemployment usually pressures earnings and risky assets.  
-            - **Oil Prices** – High oil prices boost energy, but hurt transportation and some consumer names.  
-            - **Geopolitical Tension** – Raises uncertainty and risk premiums, sometimes helping defense or energy.
-            """
-        )
-
     df = compute_sector_scores(macro_values)
-
-    st.markdown("### Sector impact overview")
 
     col_table, col_chart = st.columns([2, 3])
 
     with col_table:
+        st.markdown("#### Sector impact overview")
         st.dataframe(
             df.style.format({"Impact Score": "{:+.1f}"}),
             hide_index=True,
@@ -445,9 +404,10 @@ with tab_explorer:
         )
 
     with col_chart:
+        st.markdown("#### Visual impact by sector")
         chart = (
             alt.Chart(df)
-            .mark_bar(color=colors["accent"])
+            .mark_bar(color=COLORS["accent"])
             .encode(
                 x=alt.X("Sector:N", sort=None),
                 y=alt.Y("Impact Score:Q"),
@@ -457,8 +417,7 @@ with tab_explorer:
         )
         st.altair_chart(chart, use_container_width=True)
 
-    st.markdown("### Quick verbal summary")
-
+    st.markdown("#### Quick verbal summary")
     sorted_df = df.sort_values("Impact Score", ascending=False)
     winners = sorted_df.head(2)
     losers = sorted_df.tail(2)
@@ -472,20 +431,16 @@ with tab_explorer:
         - **Facing more headwinds:** {loser_text}
         """
     )
+    st.caption("This is a simplified educational model – not investment advice or a trading system.")
 
-    st.caption("Note: This is a simplified educational model. Real markets are more complex and noisy.")
-
-
-# ------------------------------------------------------------
-# TAB 2 – AI Chatbot
-# ------------------------------------------------------------
+# ------------ TAB 2: Chatbot ------------
 with tab_chat:
     st.subheader("Ask the Finance Tutor (Gemini-powered, educational only)")
 
     if gemini_model is None:
         st.warning(
-            "Gemini API key is not configured yet. Add GOOGLE_API_KEY to Secrets in Streamlit Cloud "
-            "so this chatbot can answer questions."
+            "The Gemini client is not ready. Check your GOOGLE_API_KEY in Secrets and the model name "
+            f'("{MODEL_NAME}").'
         )
 
     st.markdown(
@@ -498,7 +453,6 @@ with tab_chat:
     if "chat_messages" not in st.session_state:
         st.session_state.chat_messages = []
 
-    # Quick prompt buttons
     st.markdown("**Try a sample question:**")
     c1, c2, c3 = st.columns(3)
     sample_q = None
@@ -510,11 +464,10 @@ with tab_chat:
         sample_q = "What does diversification mean in investing, and why does it matter?"
 
     user_input = st.chat_input("Type your own question here...")
-
     if sample_q and not user_input:
         user_input = sample_q
 
-    # Show history
+    # show history
     for msg in st.session_state.chat_messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
@@ -531,10 +484,7 @@ with tab_chat:
 
         st.session_state.chat_messages.append({"role": "assistant", "content": reply})
 
-
-# ------------------------------------------------------------
-# TAB 3 – Learning Center
-# ------------------------------------------------------------
+# ------------ TAB 3: Learning Center ------------
 with tab_learn:
     st.subheader("Key Ideas Behind This Project")
 
