@@ -16,7 +16,7 @@ MODEL_NAME = "llama-3.1-8b-instant"
 client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
 st.set_page_config(
-    page_title="Katta MacroSuite – Markets Intelligence",
+    page_title="Katta Finsight",
     layout="wide",
     page_icon="📊",
 )
