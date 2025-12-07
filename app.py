@@ -296,7 +296,10 @@ def call_ai_research(history, user_text: str, level: str = "Professional") -> st
     messages = [{"role": "system", "content": system_prompt}]
     for m in history[-6:]:
         messages.append({"role": m["role"], "content": m["content"]})
-    messages.append({"role": "user", "content": user_text))
+    
+    # ✅ FIXED LINE (removed extra ')')
+    messages.append({"role": "user", "content": user_text})
+
     try:
         completion = client.chat.completions.create(
             model=MODEL_NAME,
@@ -307,6 +310,7 @@ def call_ai_research(history, user_text: str, level: str = "Professional") -> st
         return completion.choices[0].message.content.strip()
     except Exception as e:
         return f"AI service error: {e}"
+
 
 
 def create_pdf_report(
