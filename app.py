@@ -5,6 +5,7 @@ import altair as alt
 from groq import Groq
 from fpdf import FPDF
 import requests
+import re
 
 # Optional market data dependency
 try:
@@ -235,6 +236,40 @@ def fetch_stock_news(ticker: str, limit: int = 6):
         },
     ]
 
+def summarize_headline(title: str) -> str:
+    """
+    Use Groq to turn a headline into one short neutral sentence.
+    If GROQ_API_KEY is not set or something fails, return ''.
+    """
+    if client is None or not title:
+        return ""
+
+    try:
+        completion = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You summarise stock-market news headlines for an internal hedge-fund dashboard. "
+                        "Write ONE short, neutral sentence per headline. No advice."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "Summarise this headline in one sentence (max 18 words), "
+                        "stating the main point without adding opinions:\n\n"
+                        f"{title}"
+                    ),
+                },
+            ],
+            max_tokens=60,
+            temperature=0.2,
+        )
+        return completion.choices[0].message.content.strip()
+    except Exception:
+        return ""
 
 
 def compute_stock_sector_impacts(stock_move: float, primary_sector: str) -> pd.DataFrame:
