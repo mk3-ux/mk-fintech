@@ -1,5 +1,3 @@
-# app.py or katta_macro_suite.py
-
 import os
 import streamlit as st
 import pandas as pd
@@ -12,7 +10,6 @@ from fpdf import FPDF
 # ---------------------------
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 MODEL_NAME = "llama-3.1-8b-instant"
-
 client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
 st.set_page_config(
@@ -21,7 +18,7 @@ st.set_page_config(
     page_icon="📊",
 )
 
-# Light theme colors (simple)
+# Light theme colors
 COLORS = {
     "bg": "#F7FAFF",
     "text": "#0F172A",
@@ -77,7 +74,7 @@ def compute_stock_sector_impacts(stock_move: float, primary_sector: str) -> pd.D
         rows.append(
             {
                 "Sector": sec,
-                "Sensitivity (to stock move)": sensitivity,
+                "Sensitivity": sensitivity,
                 "Raw Score": raw_score,
             }
         )
@@ -114,8 +111,9 @@ def compute_portfolio_exposure(portfolio_df: pd.DataFrame, sector_scores: pd.Dat
     Returns weighted exposure and breakdown.
     """
     df = portfolio_df.copy()
-    if "Allocation" not in df.columns:
-        raise ValueError("Uploaded portfolio must contain 'Allocation' column")
+
+    if "Sector" not in df.columns or "Allocation" not in df.columns:
+        raise ValueError("Portfolio CSV must contain 'Sector' and 'Allocation' columns")
 
     total = df["Allocation"].sum()
     if total == 0:
@@ -127,17 +125,44 @@ def compute_portfolio_exposure(portfolio_df: pd.DataFrame, sector_scores: pd.Dat
     merged["Impact Score"].fillna(0.0, inplace=True)
     merged["Weighted Impact"] = merged["Weight"] * merged["Impact Score"]
     portfolio_score = merged["Weighted Impact"].sum()
+
     return portfolio_score, merged[
         ["Sector", "Allocation", "Weight", "Impact Score", "Weighted Impact"]
     ]
 
 
+def compute_diversification_metrics(portfolio_df: pd.DataFrame):
+    """
+    Simple diversification measure using 1 - HHI (Herfindahl-Hirschman Index).
+    """
+    df = portfolio_df.copy()
+    if "Allocation" not in df.columns:
+        return 0.0, "Undefined (no allocation)"
+    total = df["Allocation"].sum()
+    if total == 0:
+        return 0.0, "Undefined (no allocation)"
+
+    weights = df["Allocation"] / total
+    hhi = float((weights ** 2).sum())
+    diversification = 1.0 - hhi
+
+    if diversification >= 0.8:
+        label = "Very well diversified"
+    elif diversification >= 0.6:
+        label = "Well diversified"
+    elif diversification >= 0.4:
+        label = "Moderately diversified"
+    else:
+        label = "Concentrated risk"
+
+    return diversification, label
+
+
 def call_ai_research(history, user_text: str, level: str = "Professional") -> str:
     """Call Groq Llama as a corporate research analyst (concepts, narratives)."""
     if client is None:
-        return (
-            "AI Research Analyst not configured. Set GROQ_API_KEY in environment or Streamlit Secrets."
-        )
+        return "AI Research Analyst not configured. Set GROQ_API_KEY."
+
     level_line = {
         "Professional": "Write as a corporate research analyst for internal use, concise and structured.",
         "Executive": "Write a polished executive summary for C-suite consumption, ~3 paragraphs.",
@@ -146,8 +171,9 @@ def call_ai_research(history, user_text: str, level: str = "Professional") -> st
 
     system_prompt = (
         "You are an internal AI research analyst for an institutional client. "
-        "Your task: convert scenario inputs and sector outputs into concise internal research narratives, "
-        "scenario summaries, risk notes and suggested topics for internal follow-up. "
+        "Your task: convert scenario inputs, sector outputs and portfolio tilts "
+        "into concise internal research narratives, scenario summaries, risk notes, "
+        "and suggested topics for internal follow-up. "
         "You MUST NOT provide direct buy/sell recommendations, price targets or personalized investment advice. "
         + level_line
     )
@@ -180,8 +206,10 @@ def create_pdf_report(
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=12)
     pdf.add_page()
+
     pdf.set_font("Helvetica", "B", 16)
     pdf.cell(0, 10, title, ln=True, align="L")
+
     pdf.set_font("Helvetica", "", 11)
     pdf.cell(0, 8, f"Scenario: {scenario_name}", ln=True)
     pdf.ln(4)
@@ -246,7 +274,7 @@ def render_header():
             </div>
             <div>
               <div style="font-size:18px;font-weight:800;color:{COLORS['text']};">Katta MacroSuite — Markets Intelligence</div>
-              <div style="font-size:12px;color:#475569;">Single-stock impact • Sector sensitivity • Portfolio exposure • Internal research automation</div>
+              <div style="font-size:12px;color:#475569;">Single-stock impact • Sector sensitivity • Portfolio analytics • Scenario library • Internal research automation</div>
             </div>
           </div>
         </div>
@@ -257,7 +285,9 @@ def render_header():
 
 render_header()
 
+# ---------------------------
 # Sidebar
+# ---------------------------
 with st.sidebar:
     st.title("Katta MacroSuite")
 
@@ -271,7 +301,7 @@ with st.sidebar:
 
     if client is None:
         st.warning(
-            "Groq API not configured — AI Research Analyst disabled until GROQ_API_KEY is set."
+            "Groq API not configured — AI Research Analyst will show a placeholder until GROQ_API_KEY is set."
         )
 
     st.markdown(
@@ -286,7 +316,9 @@ with st.sidebar:
         "It does NOT provide buy/sell advice."
     )
 
-# Init session state
+# ---------------------------
+# Session state init
+# ---------------------------
 if "sector_df" not in st.session_state:
     st.session_state["sector_df"] = None
 if "scenario_name" not in st.session_state:
@@ -297,12 +329,18 @@ if "portfolio_df" not in st.session_state:
     st.session_state["portfolio_df"] = None
 if "ai_history" not in st.session_state:
     st.session_state["ai_history"] = []
+if "scenario_library" not in st.session_state:
+    st.session_state["scenario_library"] = []
 
+# ---------------------------
 # Main tabs
-tab_explorer, tab_portfolio, tab_ai, tab_reports = st.tabs(
+# ---------------------------
+tab_explorer, tab_portfolio, tab_whatif, tab_scenarios, tab_ai, tab_reports = st.tabs(
     [
         "Stock Impact Explorer",
         "Portfolio Analyzer",
+        "What-If Builder",
+        "Scenario Library",
         "AI Research Analyst",
         "Generate Report",
     ]
@@ -355,6 +393,18 @@ with tab_explorer:
             hide_index=True,
         )
 
+        # Simple scenario shock level (fintech-ish insight)
+        severity = abs(stock_move)
+        if severity >= 15:
+            risk_label = "High shock"
+        elif severity >= 8:
+            risk_label = "Moderate shock"
+        elif severity >= 3:
+            risk_label = "Low shock"
+        else:
+            risk_label = "Very small move"
+        st.markdown(f"**Scenario shock level:** {risk_label}")
+
     with col2:
         st.markdown("#### Visual Overview")
         chart = (
@@ -387,6 +437,17 @@ with tab_explorer:
         "This is a simplified, educational sensitivity model — not a real-world risk model or investment advice."
     )
 
+    # Save scenario to library
+    if st.button("Save this scenario to library"):
+        st.session_state["scenario_library"].append(
+            {
+                "name": scenario_name,
+                "meta": scenario_meta.copy(),
+                "sector_df": sector_df.copy(),
+            }
+        )
+        st.success("Scenario saved to library for later comparison.")
+
 # ---------- Portfolio Analyzer ----------
 with tab_portfolio:
     st.subheader("Portfolio / Revenue Exposure Analyzer")
@@ -398,8 +459,29 @@ with tab_portfolio:
         try:
             portfolio_df = pd.read_csv(uploaded)
             st.session_state["portfolio_df"] = portfolio_df
+
             st.write("Uploaded portfolio preview:")
             st.dataframe(portfolio_df.head(20), use_container_width=True)
+
+            # Diversification metric (fintech-y feature)
+            diversification, div_label = compute_diversification_metrics(portfolio_df)
+            st.markdown(
+                f"**Diversification score (1−HHI):** {diversification:.3f} — {div_label}"
+            )
+
+            # Simple allocation chart
+            alloc_chart = (
+                alt.Chart(portfolio_df)
+                .mark_bar()
+                .encode(
+                    x=alt.X("Sector:N", sort=None),
+                    y=alt.Y("Allocation:Q"),
+                    tooltip=["Sector", "Allocation"],
+                )
+                .properties(height=250, title="Sector Allocation")
+            )
+            st.altair_chart(alloc_chart, use_container_width=True)
+
         except Exception as e:
             st.error(f"Error reading CSV: {e}")
 
@@ -437,62 +519,171 @@ with tab_portfolio:
             except Exception as e:
                 st.error(f"Analysis error: {e}")
 
+# ---------- What-If Builder ----------
+with tab_whatif:
+    st.subheader("What-If Portfolio Builder")
+    st.markdown(
+        "Use your uploaded portfolio and adjust sector allocations with multipliers "
+        "to see how your exposure changes — no external data needed."
+    )
+
+    sector_df_current = st.session_state.get("sector_df")
+    portfolio_df_current = st.session_state.get("portfolio_df")
+
+    if sector_df_current is None:
+        st.warning(
+            "No scenario found. Configure a stock scenario first on the 'Stock Impact Explorer' tab."
+        )
+    elif portfolio_df_current is None:
+        st.warning(
+            "No portfolio found. Upload a portfolio on the 'Portfolio Analyzer' tab first."
+        )
+    else:
+        st.markdown("#### Adjust sector weights (multiplier 0.0x to 2.0x)")
+
+        multipliers = {}
+        for _, row in portfolio_df_current.iterrows():
+            sec = row["Sector"]
+            m = st.slider(
+                f"{sec} multiplier",
+                0.0,
+                2.0,
+                1.0,
+                0.05,
+                help="1.0 = keep allocation same, 2.0 = double, 0.5 = cut in half",
+            )
+            multipliers[sec] = m
+
+        new_df = portfolio_df_current.copy()
+        new_df["Allocation"] = new_df.apply(
+            lambda r: r["Allocation"] * multipliers.get(r["Sector"], 1.0),
+            axis=1,
+        )
+
+        st.markdown("#### What-if portfolio (after multipliers)")
+        st.dataframe(new_df, use_container_width=True)
+
+        base_score, _ = compute_portfolio_exposure(
+            portfolio_df_current, sector_df_current
+        )
+        new_score, new_breakdown = compute_portfolio_exposure(
+            new_df, sector_df_current
+        )
+        delta = new_score - base_score
+
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Original Portfolio Impact Score", f"{base_score:.3f}")
+        with col_b:
+            st.metric(
+                "What-if Portfolio Impact Score",
+                f"{new_score:.3f}",
+                delta=f"{delta:+.3f}",
+            )
+
+        st.markdown("#### What-if breakdown:")
+        st.dataframe(new_breakdown, use_container_width=True)
+
+# ---------- Scenario Library ----------
+with tab_scenarios:
+    st.subheader("Scenario Library & Comparison")
+
+    lib = st.session_state.get("scenario_library", [])
+    if not lib:
+        st.info("No saved scenarios yet. Save one from the 'Stock Impact Explorer' tab.")
+    else:
+        st.markdown("#### Saved scenarios")
+        for i, sc in enumerate(lib):
+            with st.expander(f"{i+1}. {sc['name']}"):
+                st.write("Inputs:", sc["meta"])
+                st.dataframe(sc["sector_df"], use_container_width=True)
+
+        st.markdown("#### Compare two scenarios by sector")
+        names = [sc["name"] for sc in lib]
+
+        col1, col2 = st.columns(2)
+        with col1:
+            sel1 = st.selectbox("Scenario A", names, index=0)
+        with col2:
+            sel2 = st.selectbox("Scenario B", names, index=min(1, len(names) - 1))
+
+        if sel1 and sel2 and sel1 != sel2:
+            sc1 = next(sc for sc in lib if sc["name"] == sel1)
+            sc2 = next(sc for sc in lib if sc["name"] == sel2)
+            df1 = sc1["sector_df"].rename(
+                columns={"Impact Score": "Impact A", "Impact Label": "Label A"}
+            )
+            df2 = sc2["sector_df"].rename(
+                columns={"Impact Score": "Impact B", "Impact Label": "Label B"}
+            )
+            merged = df1.merge(df2, on="Sector", how="outer")
+            st.dataframe(merged, use_container_width=True)
+        else:
+            st.caption("Select two different scenarios to compare.")
+
 # ---------- AI Research Analyst ----------
 with tab_ai:
     st.subheader("AI Research Analyst — Generate internal narratives")
     st.markdown(
-        "Draft internal memos, scenario summaries, and risk notes. (AI must be configured with GROQ_API_KEY.)"
+        "Draft internal memos, scenario summaries, and risk notes. "
+        "(AI must be configured with GROQ_API_KEY in the environment.)"
     )
 
     user_q = st.text_area(
         "Ask the AI Research Analyst (e.g., 'Write an executive summary of this stock scenario')",
         height=120,
     )
-    ai_style = st.selectbox(
+    ai_style_choice = st.selectbox(
         "AI style", ["Professional", "Executive", "Technical"], index=0
     )
 
     if st.button("Run AI"):
-        if client is None:
-            st.error("AI not configured. Set GROQ_API_KEY as an environment variable.")
-        else:
-            sector_df_current = st.session_state.get("sector_df")
-            scenario_name = st.session_state.get("scenario_name", "Current scenario")
-            scenario_meta = st.session_state.get("scenario_meta", {})
+        sector_df_current = st.session_state.get("sector_df")
+        scenario_name = st.session_state.get("scenario_name", "Current scenario")
+        scenario_meta = st.session_state.get("scenario_meta", {})
+        portfolio_df_current = st.session_state.get("portfolio_df")
 
-            if sector_df_current is None:
-                st.error(
-                    "No scenario found. Please configure a stock move on the 'Stock Impact Explorer' tab first."
+        if sector_df_current is None:
+            st.error(
+                "No scenario found. Please configure a stock move on the 'Stock Impact Explorer' tab first."
+            )
+        else:
+            diversification_txt = ""
+            if portfolio_df_current is not None:
+                div, div_label = compute_diversification_metrics(portfolio_df_current)
+                diversification_txt = f"Diversification score: {div:.3f} ({div_label})."
+
+            context = (
+                f"Scenario: {scenario_name}\nScenario inputs: {scenario_meta}\n"
+                f"{diversification_txt}\nTop sector impacts:\n"
+            )
+            top_n = sector_df_current.sort_values(
+                "Impact Score", ascending=False
+            ).head(3)
+            for _, r in top_n.iterrows():
+                context += (
+                    f"- {r['Sector']}: {r['Impact Score']} ({r['Impact Label']})\n"
                 )
-            else:
-                context = (
-                    f"Scenario: {scenario_name}\nScenario inputs: {scenario_meta}\nTop sector impacts:\n"
-                )
-                top_n = sector_df_current.sort_values(
-                    "Impact Score", ascending=False
-                ).head(3)
-                for _, r in top_n.iterrows():
-                    context += (
-                        f"- {r['Sector']}: {r['Impact Score']} ({r['Impact Label']})\n"
-                    )
-                prompt = context + "\nUser request:\n" + user_q
-                st.session_state["ai_history"].append(
-                    {"role": "user", "content": prompt}
-                )
-                with st.spinner("Generating AI summary..."):
-                    out = call_ai_research(
-                        st.session_state["ai_history"], prompt, ai_style
-                    )
-                st.markdown("**AI output**")
-                st.markdown(out)
-                st.session_state["ai_history"].append(
-                    {"role": "assistant", "content": out}
-                )
-                st.session_state["ai_history"] = st.session_state["ai_history"][-20:]
+
+            prompt = context + "\nUser request:\n" + user_q
+            st.session_state["ai_history"].append({"role": "user", "content": prompt})
+
+            out = call_ai_research(
+                st.session_state["ai_history"], prompt, ai_style_choice
+            )
+
+            st.markdown("**AI output**")
+            st.markdown(out)
+
+            st.session_state["ai_history"].append(
+                {"role": "assistant", "content": out}
+            )
+            st.session_state["ai_history"] = st.session_state["ai_history"][-20:]
 
 # ---------- Report Generation ----------
 with tab_reports:
     st.subheader("Generate Downloadable Report")
+
     report_title = st.text_input("Report title", "Stock Scenario & Portfolio Insight")
     include_portfolio = st.checkbox(
         "Include uploaded portfolio exposure (if available)", value=True
@@ -530,6 +721,7 @@ with tab_reports:
                 portfolio_table,
                 ai_summary_for_report,
             )
+
             st.download_button(
                 "Download PDF report",
                 data=pdf_bytes,
@@ -540,5 +732,5 @@ with tab_reports:
 # Footer / notes
 st.markdown("---")
 st.caption(
-    "Katta MacroSuite — decision-support analytics. Not investment advice. For internal corporate use."
+    "Katta MacroSuite — decision-support analytics. Not investment advice. For internal / educational use."
 )
