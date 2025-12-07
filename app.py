@@ -351,7 +351,10 @@ with tab1:
 
         st.markdown("#### Quick Take")
         st.write(
-            f"- **Sector shocked:** {shocked_sector} ({stock_label})  
+          st.markdown("#### Quick Take")
+          st.write(
+            f"- **Sector shocked:** {shocked_sector} ({stock_label})\n"
+            f"- **All listed stocks in this sector inherit that impact in this simple model.**"
 - **All listed stocks in this sector inherit that impact in this simple model.**"
         )
     else:
