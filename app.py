@@ -1,5 +1,3 @@
-# app.py
-
 import os
 import requests
 import streamlit as st
@@ -9,26 +7,29 @@ from groq import Groq
 from fpdf import FPDF
 
 # ---------------------------
-# HARD-CODED API KEYS (your keys)
+# Config / API Keys
 # ---------------------------
-# WARNING: Do NOT commit this file to GitHub with real keys.
-NEWSAPI_KEY = "4f0f0589094c414a8ef178ee05c9226d"
-MASSIVE_API_KEY = "Q1pmrfqv0vV6caqxpJUjwcyEsSEvvSJU"
 
-# Groq key is optional – use env var so you don’t leak it
+# 🔴 IMPORTANT: paste your real keys here on your machine
+MASSIVE_API_KEY = "Q1pmrfqv0vV6caqxpJUjwcyEsSEvvSJU"   # e.g. Q1pmrfqv0vV6caqxpJUj...
+NEWSAPI_KEY = ""          # e.g. 4f0f0589...
+
+# Optional: you can also hard-code Groq key instead of env if you want
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
 MODEL_NAME = "llama-3.1-8b-instant"
+MASSIVE_BASE_URL = "https://api.massive.com"
+NEWSAPI_URL = "https://newsapi.org/v2/everything"
+
 client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
-# ---------------------------
-# Streamlit config
-# ---------------------------
 st.set_page_config(
     page_title="Katta Finsight",
     layout="wide",
     page_icon="📊",
 )
 
+# Light theme colors
 COLORS = {
     "bg": "#F7FAFF",
     "text": "#0F172A",
@@ -37,6 +38,7 @@ COLORS = {
     "subtle": "#E6EEF8",
 }
 
+# Small CSS polish
 st.markdown(
     f"""
     <style>
@@ -49,8 +51,9 @@ st.markdown(
 )
 
 # ---------------------------
-# Domain model
+# Static data
 # ---------------------------
+
 SECTORS = [
     "Tech",
     "Real Estate",
@@ -61,16 +64,113 @@ SECTORS = [
     "Banks",
 ]
 
-# Simple “stock → sector” sensitivity
+# very simple "how sensitive is this sector to the stock move" weights
+SECTOR_SENSITIVITY = {
+    "Tech": 1.0,
+    "Real Estate": 0.6,
+    "Luxury / Discretionary": 0.8,
+    "Bonds": -0.4,
+    "Energy": 0.5,
+    "Consumer Staples": 0.3,
+    "Banks": 0.7,
+}
+
+# ---------------------------
+# Helpers: Massive + NewsAPI
+# ---------------------------
+
+def fetch_massive_snapshot(ticker: str):
+    """
+    Call Massive single-ticker snapshot endpoint.
+
+    GET /v2/snapshot/locale/us/markets/stocks/tickers/{stocksTicker}
+
+    Returns (snapshot_dict, None) on success
+    or (None, error_message) on failure.
+    """
+    ticker = ticker.upper().strip()
+    if not ticker:
+        return None, "No ticker provided."
+
+    if not MASSIVE_API_KEY or MASSIVE_API_KEY == "YOUR_MASSIVE_API_KEY_HERE":
+        return None, "MASSIVE_API_KEY is missing. Paste your key in the code."
+
+    url = f"{MASSIVE_BASE_URL}/v2/snapshot/locale/us/markets/stocks/tickers/{ticker}"
+    headers = {"Authorization": f"Bearer {MASSIVE_API_KEY}"}
+
+    try:
+        resp = requests.get(url, headers=headers, timeout=8)
+        data = resp.json()
+    except Exception as e:
+        return None, f"Network error calling Massive: {e}"
+
+    if resp.status_code != 200:
+        status = data.get("status") if isinstance(data, dict) else str(data)
+        return None, f"Massive API error {resp.status_code}: {status}"
+
+    ticker_obj = data.get("ticker") or {}
+    last_trade = ticker_obj.get("lastTrade") or {}
+
+    price = last_trade.get("p")
+    change = ticker_obj.get("todaysChange")
+    change_pct = ticker_obj.get("todaysChangePerc")
+    updated = ticker_obj.get("updated")
+
+    if price is None:
+        return None, "Snapshot returned no lastTrade price (plan may not include trades)."
+
+    snapshot = {
+        "symbol": ticker_obj.get("ticker", ticker),
+        "price": price,
+        "change": change,
+        "change_pct": change_pct,
+        "updated": updated,
+        "raw": data,
+    }
+    return snapshot, None
+
+
+def fetch_news(keyword: str, page_size: int = 6):
+    """
+    Fetch finance/news headlines for the given keyword using NewsAPI.
+    """
+    if not NEWSAPI_KEY or NEWSAPI_KEY == "YOUR_NEWSAPI_KEY_HERE":
+        return [], "NEWSAPI_KEY is missing. Paste your key in the code."
+
+    params = {
+        "q": keyword,
+        "language": "en",
+        "sortBy": "publishedAt",
+        "pageSize": page_size,
+        "apiKey": NEWSAPI_KEY,
+    }
+    try:
+        resp = requests.get(NEWSAPI_URL, params=params, timeout=8)
+        data = resp.json()
+    except Exception as e:
+        return [], f"Network error calling NewsAPI: {e}"
+
+    if resp.status_code != 200:
+        status = data.get("message") if isinstance(data, dict) else str(data)
+        return [], f"NewsAPI error {resp.status_code}: {status}"
+
+    return data.get("articles", []), None
+
+# ---------------------------
+# Helpers: scoring, AI, report
+# ---------------------------
+
 def compute_stock_sector_impacts(stock_move_pct: float, primary_sector: str) -> pd.DataFrame:
     """
-    stock_move_pct: % move of stock (e.g., +3, -5)
-    primary_sector: main sector of this stock
-    Primary sector gets sensitivity 1.0; all others 0.4
+    Very simple model:
+    - The primary sector has sensitivity 1.0
+    - Other sectors use SECTOR_SENSITIVITY
+    Impact Score is scaled to +/-5 so it's easy to read.
     """
     rows = []
     for sec in SECTORS:
-        sensitivity = 1.0 if sec == primary_sector else 0.4
+        base_sens = SECTOR_SENSITIVITY.get(sec, 0.4)
+        sensitivity = 1.0 if sec == primary_sector else base_sens
         raw_score = sensitivity * stock_move_pct
         rows.append(
             {
@@ -103,124 +203,18 @@ def compute_stock_sector_impacts(stock_move_pct: float, primary_sector: str) -> 
     df["Impact Label"] = df["Impact Score"].apply(label)
     return df[["Sector", "Impact Score", "Impact Label"]]
 
-# ---------------------------
-# Massive helpers (live stock data)
-# ---------------------------
-
-MASSIVE_BASE = "https://api.massive.com"
-
-def fetch_live_snapshot(ticker: str):
-    """
-    Use Massive single-ticker snapshot:
-    GET /v2/snapshot/locale/us/markets/stocks/tickers/{stocksTicker}?apiKey=...
-    Returns dict with price, change, change_pct and raw snapshot.
-    """
-    if not ticker:
-        return None
-
-    url = f"{MASSIVE_BASE}/v2/snapshot/locale/us/markets/stocks/tickers/{ticker.upper()}"
-    params = {"apiKey": MASSIVE_API_KEY}
-    try:
-        resp = requests.get(url, params=params, timeout=5)
-        data = resp.json()
-        t = data.get("ticker")
-        if not t:
-            return None
-
-        last_trade = t.get("lastTrade") or {}
-        day_bar = t.get("day") or {}
-
-        price = last_trade.get("p") or day_bar.get("c")
-        change = t.get("todaysChange")
-        change_pct = t.get("todaysChangePerc")
-
-        return {
-            "price": price,
-            "change": change,
-            "change_pct": change_pct,
-            "raw": t,
-        }
-    except Exception as e:
-        print("Massive error:", e)
-        return None
-
-
-def fetch_bulk_snapshots(tickers):
-    """
-    Simple loop over tickers for hedge fund dashboard.
-    """
-    rows = []
-    for tk in tickers:
-        tk = tk.strip().upper()
-        if not tk:
-            continue
-        snap = fetch_live_snapshot(tk)
-        if snap is None:
-            rows.append(
-                {
-                    "Ticker": tk,
-                    "Price": None,
-                    "Change": None,
-                    "Change %": None,
-                    "Status": "Error / No data",
-                }
-            )
-        else:
-            rows.append(
-                {
-                    "Ticker": tk,
-                    "Price": snap["price"],
-                    "Change": snap["change"],
-                    "Change %": snap["change_pct"],
-                    "Status": "OK",
-                }
-            )
-    if rows:
-        return pd.DataFrame(rows)
-    return pd.DataFrame(columns=["Ticker", "Price", "Change", "Change %", "Status"])
-
-# ---------------------------
-# NewsAPI helper
-# ---------------------------
-
-def fetch_news(keyword="finance", page_size=5):
-    """
-    Use NewsAPI 'everything' endpoint for a keyword.
-    """
-    if not NEWSAPI_KEY:
-        return []
-    url = "https://newsapi.org/v2/everything"
-    params = {
-        "q": keyword,
-        "language": "en",
-        "sortBy": "publishedAt",
-        "pageSize": page_size,
-        "apiKey": NEWSAPI_KEY,
-    }
-    try:
-        resp = requests.get(url, params=params, timeout=5)
-        data = resp.json()
-        if resp.status_code == 200 and "articles" in data:
-            return data["articles"]
-        return []
-    except Exception as e:
-        print("NewsAPI error:", e)
-        return []
-
-# ---------------------------
-# Portfolio + AI + PDF helpers
-# ---------------------------
 
 def compute_portfolio_exposure(portfolio_df: pd.DataFrame, sector_scores: pd.DataFrame):
+    """
+    Expects portfolio_df with columns: Sector, Allocation (as percent or fraction)
+    Returns weighted exposure and breakdown.
+    """
     df = portfolio_df.copy()
     if "Allocation" not in df.columns:
         raise ValueError("Uploaded portfolio must contain 'Allocation' column")
 
     total = df["Allocation"].sum()
-    if total == 0:
-        df["Weight"] = 0.0
-    else:
-        df["Weight"] = df["Allocation"] / total
+    df["Weight"] = df["Allocation"] / total if total else 0.0
 
     merged = df.merge(sector_scores, on="Sector", how="left")
     merged["Impact Score"].fillna(0.0, inplace=True)
@@ -229,6 +223,7 @@ def compute_portfolio_exposure(portfolio_df: pd.DataFrame, sector_scores: pd.Dat
     return portfolio_score, merged[
         ["Sector", "Allocation", "Weight", "Impact Score", "Weighted Impact"]
     ]
+
 
 def call_ai_research(history, user_text: str, level: str = "Professional") -> str:
     if client is None:
@@ -242,7 +237,7 @@ def call_ai_research(history, user_text: str, level: str = "Professional") -> st
 
     system_prompt = (
         "You are an internal AI research analyst for an institutional client. "
-        "Your task: convert stock scenarios, sector impacts, and live data into concise internal research narratives, "
+        "Your task: convert stock scenarios and sector outputs into concise internal research narratives, "
         "scenario summaries, risk notes and suggested topics for internal follow-up. "
         "You MUST NOT provide direct buy/sell recommendations, price targets or personalized investment advice. "
         + level_line
@@ -263,6 +258,7 @@ def call_ai_research(history, user_text: str, level: str = "Professional") -> st
         return completion.choices[0].message.content.strip()
     except Exception as e:
         return f"AI service error: {e}"
+
 
 def create_pdf_report(
     title: str,
@@ -324,8 +320,9 @@ def create_pdf_report(
     return pdf.output(dest="S").encode("latin-1")
 
 # ---------------------------
-# Header
+# UI helpers
 # ---------------------------
+
 def render_header():
     st.markdown(
         f"""
@@ -335,8 +332,10 @@ def render_header():
               KM
             </div>
             <div>
-              <div style="font-size:18px;font-weight:800;color:{COLORS['text']};">Katta MacroSuite — Stock Intelligence</div>
-              <div style="font-size:12px;color:#475569;">Live Massive data • Sector sensitivity • Hedge fund dashboard • AI research • PDF reports</div>
+              <div style="font-size:18px;font-weight:800;color:{COLORS['text']};">Katta MacroSuite — Live Markets Intelligence</div>
+              <div style="font-size:12px;color:#475569;">
+                Live stock snapshot • Sector sensitivity • Portfolio exposure • AI research • PDF reports
+              </div>
             </div>
           </div>
         </div>
@@ -344,11 +343,28 @@ def render_header():
         unsafe_allow_html=True,
     )
 
+
 render_header()
+
+# ---------------------------
+# Session state
+# ---------------------------
+
+if "sector_df" not in st.session_state:
+    st.session_state["sector_df"] = None
+if "scenario_name" not in st.session_state:
+    st.session_state["scenario_name"] = None
+if "scenario_meta" not in st.session_state:
+    st.session_state["scenario_meta"] = {}
+if "portfolio_df" not in st.session_state:
+    st.session_state["portfolio_df"] = None
+if "ai_history" not in st.session_state:
+    st.session_state["ai_history"] = []
 
 # ---------------------------
 # Sidebar
 # ---------------------------
+
 with st.sidebar:
     st.title("Katta MacroSuite")
 
@@ -360,123 +376,131 @@ with st.sidebar:
 
     st.markdown("---")
 
+    if not MASSIVE_API_KEY or MASSIVE_API_KEY == "YOUR_MASSIVE_API_KEY_HERE":
+        st.info("Add your Massive API key in the code to enable live prices.")
+
+    if not NEWSAPI_KEY or NEWSAPI_KEY == "YOUR_NEWSAPI_KEY_HERE":
+        st.info("Add your NewsAPI key in the code to enable headlines.")
+
     if client is None:
-        st.warning(
-            "Groq API not configured — AI Research Analyst disabled until GROQ_API_KEY is set."
-        )
+        st.warning("Groq API not configured — AI Research Analyst disabled until GROQ_API_KEY is set.")
 
     st.markdown(
-        "Upload a CSV portfolio (columns: Sector, Allocation). "
+        "Upload a CSV portfolio (columns: `Sector`, `Allocation`). "
         "Allocation can be percent or units."
     )
 
     st.markdown("---")
 
     st.caption(
-        "This platform is a decision-support tool. "
-        "It does NOT provide buy/sell advice."
+        "Decision-support only. This dashboard does NOT provide investment advice."
     )
-
-# ---------------------------
-# Session state init
-# ---------------------------
-for key, default in [
-    ("sector_df", None),
-    ("scenario_name", None),
-    ("scenario_meta", {}),
-    ("portfolio_df", None),
-    ("ai_history", []),
-]:
-    if key not in st.session_state:
-        st.session_state[key] = default
 
 # ---------------------------
 # Tabs
 # ---------------------------
-tab_live, tab_portfolio, tab_dashboard, tab_ai, tab_reports = st.tabs(
+
+tab_live, tab_portfolio, tab_ai, tab_reports = st.tabs(
     [
-        "Live Stock Impact",
+        "Live Stock Dashboard",
         "Portfolio Analyzer",
-        "Hedge Fund Dashboard",
         "AI Research Analyst",
         "Generate Report",
     ]
 )
 
-# ---------- Live Stock Impact ----------
+# ---------- Live Stock Dashboard ----------
 with tab_live:
-    st.subheader("Live Stock Impact — Stock → Sector Sensitivity")
+    st.subheader("Live Stock Dashboard — Massive + NewsAPI")
 
-    stock_name = st.text_input("Stock ticker", "AAPL").upper()
-    primary_sector = st.selectbox(
-        "Primary sector for this stock",
-        SECTORS,
-        index=0,
-        help="Which sector best represents this stock?",
-    )
+    col_input1, col_input2 = st.columns([2, 1])
+    with col_input1:
+        ticker = st.text_input("Stock ticker", "AAPL").upper().strip()
+    with col_input2:
+        primary_sector = st.selectbox(
+            "Primary sector for this stock",
+            SECTORS,
+            index=0,
+            help="Which sector best represents this stock?",
+        )
 
-    # Live snapshot from Massive
-    snapshot = fetch_live_snapshot(stock_name)
+    use_live = st.checkbox("Use Massive live snapshot (if available)", value=True)
 
-    col_live_1, col_live_2, col_live_3 = st.columns(3)
-    if snapshot and snapshot["price"] is not None:
+    snapshot = None
+    live_error = None
+    if use_live and ticker:
+        snapshot, live_error = fetch_massive_snapshot(ticker)
+
+    if snapshot is None:
+        if live_error:
+            st.warning(f"Could not load live data from Massive: {live_error}")
+        st.info(
+            "You can still use the sliders below for a manual 'what-if' scenario even without live data."
+        )
+
+    # Metrics row
+    col_m1, col_m2, col_m3 = st.columns(3)
+    default_move = 0.0
+
+    if snapshot is not None:
         price = snapshot["price"]
         change = snapshot["change"]
         change_pct = snapshot["change_pct"]
 
-        with col_live_1:
-            st.metric("Live Price", f"${price:,.2f}")
-        with col_live_2:
-            st.metric(
-                "Today’s Change",
-                f"{change:+.2f}" if change is not None else "N/A",
-            )
-        with col_live_3:
-            st.metric(
-                "Change (%)",
-                f"{change_pct:+.2f}%" if change_pct is not None else "N/A",
-            )
+        with col_m1:
+            st.metric("Last Price", f"${price:,.2f}")
+        with col_m2:
+            if change is not None:
+                st.metric("Today's Change", f"{change:+.2f}")
+            else:
+                st.metric("Today's Change", "n/a")
+        with col_m3:
+            if change_pct is not None:
+                st.metric("Change %", f"{change_pct:+.2f}%")
+                default_move = float(change_pct)
+            else:
+                st.metric("Change %", "n/a")
 
-        default_move = int(round(change_pct)) if isinstance(change_pct, (int, float)) else 0
-    else:
-        st.info("Could not load live data from Massive (check key/plan/internet).")
-        default_move = 0
+    st.markdown("### What-if: sector sensitivity to this stock move")
 
-    st.markdown("### Scenario: extra move in this stock")
-    stock_move = st.slider(
-        "Assumed additional stock move (%)",
-        -20,
-        20,
-        int(default_move),
-        help="Negative = stock down, Positive = stock up. Uses Massive live data as context.",
-    )
+    col_sl, col_txt = st.columns([2, 3])
+    with col_sl:
+        stock_move = st.slider(
+            "Assumed stock move (%)",
+            -20.0,
+            20.0,
+            float(round(default_move, 1)) if snapshot is not None else 0.0,
+            step=0.5,
+            help="Negative = stock down, Positive = stock up.",
+        )
+    with col_txt:
+        st.write(
+            "This is a toy model for how much each sector **could** feel this stock move. "
+            "Primary sector gets the strongest effect; others get smaller spillovers."
+        )
 
     sector_df = compute_stock_sector_impacts(stock_move, primary_sector)
-
-    scenario_name = f"{stock_name} extra move {stock_move:+.1f}%"
-    scenario_meta = {
-        "Stock": stock_name,
-        "Extra Move (%)": stock_move,
-        "Primary Sector": primary_sector,
-        "Live price (if available)": snapshot["price"] if snapshot else None,
-        "Live change % (if available)": snapshot["change_pct"] if snapshot else None,
-    }
-
     st.session_state["sector_df"] = sector_df
+    scenario_name = f"{ticker} move {stock_move:+.1f}%"
+    scenario_meta = {
+        "Stock": ticker,
+        "Move (%)": stock_move,
+        "Primary Sector": primary_sector,
+        "Live price used": bool(snapshot),
+    }
     st.session_state["scenario_name"] = scenario_name
     st.session_state["scenario_meta"] = scenario_meta
 
     c1, c2 = st.columns([2, 3])
     with c1:
-        st.markdown("#### Sector Impact from this Stock Scenario")
+        st.markdown("#### Sector Impact Table")
         st.dataframe(
             sector_df.style.format({"Impact Score": "{:+.2f}"}),
             use_container_width=True,
             hide_index=True,
         )
-
     with c2:
-        st.markdown("#### Visual Overview")
+        st.markdown("#### Sector Impact Bars")
         chart = (
             alt.Chart(sector_df)
             .mark_bar()
@@ -500,35 +524,41 @@ with tab_live:
         f"{row.Sector} ({row['Impact Label']})" for _, row in losers.iterrows()
     )
     st.markdown(
-        f"- **Most positively exposed sectors:** {winner_text}  \n"
+        f"- **Most positively exposed sectors (toy model):** {winner_text}  \n"
         f"- **Most negatively exposed / least helped:** {loser_text}"
     )
-    st.caption(
-        "Simplified teaching model — not a real-world risk engine or investment advice."
-    )
 
-    # Embedded news for this stock
-    st.markdown("### Recent Headlines for this Ticker")
-    articles = fetch_news(stock_name, page_size=5)
-    if articles:
-        for art in articles:
-            title = art.get("title") or "Untitled"
-            desc = art.get("description") or ""
-            url = art.get("url")
-            st.markdown(f"**📰 {title}**")
-            if desc:
-                st.write(desc)
-            if url:
-                st.write(f"[Read more]({url})")
-            st.write("---")
+    # Integrated news panel
+    st.markdown("### Live Headlines for this stock / theme")
+    if ticker:
+        articles, news_err = fetch_news(ticker)
+        if news_err:
+            st.warning(f"Could not load news: {news_err}")
+        elif not articles:
+            st.info("No news articles found for this keyword right now.")
+        else:
+            for art in articles:
+                title = art.get("title", "No title")
+                source = (art.get("source") or {}).get("name")
+                url = art.get("url")
+                desc = art.get("description")
+
+                st.markdown(f"**📰 {title}**")
+                if source:
+                    st.caption(f"Source: {source}")
+                if desc:
+                    st.write(desc)
+                if url:
+                    st.markdown(f"[Read more]({url})")
+                st.markdown("---")
     else:
-        st.write("No news found or NewsAPI issue.")
+        st.info("Enter a ticker symbol above to see news headlines.")
 
 # ---------- Portfolio Analyzer ----------
 with tab_portfolio:
     st.subheader("Portfolio / Revenue Exposure Analyzer")
-    st.markdown("Upload a CSV with columns: `Sector`, `Allocation` (percent or units).")
 
+    st.markdown("Upload a CSV with columns: `Sector`, `Allocation` (percent or units).")
     uploaded = st.file_uploader("Upload portfolio CSV", type=["csv"])
 
     if uploaded is not None:
@@ -546,7 +576,7 @@ with tab_portfolio:
 
         if sector_df_current is None:
             st.error(
-                "No scenario found. Configure a stock scenario on the 'Live Stock Impact' tab first."
+                "No scenario found. Configure a stock move on the 'Live Stock Dashboard' tab first."
             )
         elif portfolio_df_current is None:
             st.error("Please upload a portfolio CSV first.")
@@ -561,73 +591,41 @@ with tab_portfolio:
 
                 if score > 1.5:
                     st.success(
-                        "Portfolio tilt: Mild to strong positive sensitivity to the current stock scenario."
+                        "Portfolio tilt: mild to strong positive sensitivity to the current stock scenario."
                     )
                 elif score < -1.5:
                     st.warning(
-                        "Portfolio tilt: Mild to strong negative sensitivity to the current stock scenario."
+                        "Portfolio tilt: mild to strong negative sensitivity to the current stock scenario."
                     )
                 else:
                     st.info(
-                        "Portfolio tilt: Largely neutral under the chosen stock scenario."
+                        "Portfolio tilt: largely neutral under the chosen stock scenario."
                     )
             except Exception as e:
                 st.error(f"Analysis error: {e}")
 
-# ---------- Hedge Fund Dashboard ----------
-with tab_dashboard:
-    st.subheader("Hedge Fund Dashboard — Live Watchlist (Massive)")
-
-    default_watchlist = "AAPL, MSFT, NVDA, AMZN, GOOGL"
-    watchlist_str = st.text_input(
-        "Watchlist tickers (comma separated)", default_watchlist
-    )
-    tickers = [t.strip().upper() for t in watchlist_str.split(",") if t.strip()]
-
-    if st.button("Refresh live data"):
-        if not tickers:
-            st.error("Please enter at least one ticker.")
-        else:
-            df_watch = fetch_bulk_snapshots(tickers)
-            if df_watch.empty:
-                st.error("No data returned from Massive.")
-            else:
-                st.dataframe(df_watch, use_container_width=True)
-
-                # Simple bar chart of % moves
-                df_chart = df_watch.dropna(subset=["Change %"])
-                if not df_chart.empty:
-                    st.markdown("#### % Change Heat Map")
-                    chart = (
-                        alt.Chart(df_chart)
-                        .mark_bar()
-                        .encode(
-                            x=alt.X("Ticker:N"),
-                            y=alt.Y("Change %:Q"),
-                            tooltip=["Ticker", "Price", "Change %"],
-                        )
-                        .properties(height=320)
-                    )
-                    st.altair_chart(chart, use_container_width=True)
-                else:
-                    st.info("No valid Change % values to chart.")
-
 # ---------- AI Research Analyst ----------
 with tab_ai:
-    st.subheader("AI Research Analyst — Generate internal narratives")
+    st.subheader("AI Research Analyst — Internal Narratives")
     st.markdown(
-        "Draft internal memos, scenario summaries, and risk notes. (AI requires GROQ_API_KEY set in your environment.)"
+        "Draft internal memos, scenario summaries, and risk notes. "
+        "AI must be configured with `GROQ_API_KEY`."
     )
 
     user_q = st.text_area(
         "Ask the AI Research Analyst "
-        "(e.g., 'Write an executive summary of this stock scenario for a hedge fund PM')",
+        "(e.g., 'Write an executive summary of this stock scenario for PMs')",
         height=140,
+    )
+    ai_style = st.selectbox(
+        "AI style", ["Professional", "Executive", "Technical"], index=0
     )
 
     if st.button("Run AI"):
         if client is None:
-            st.error("AI not configured. Set GROQ_API_KEY as an environment variable.")
+            st.error(
+                "AI not configured. Set GROQ_API_KEY as an environment variable or in your secrets."
+            )
         else:
             sector_df_current = st.session_state.get("sector_df")
             scenario_name = st.session_state.get("scenario_name", "Current scenario")
@@ -635,13 +633,11 @@ with tab_ai:
 
             if sector_df_current is None:
                 st.error(
-                    "No scenario found. Please configure a stock on the 'Live Stock Impact' tab first."
+                    "No scenario found. Configure a stock move on the 'Live Stock Dashboard' tab first."
                 )
             else:
                 context = (
-                    f"Scenario: {scenario_name}\n"
-                    f"Scenario inputs: {scenario_meta}\n"
-                    f"Top sector impacts:\n"
+                    f"Scenario: {scenario_name}\nScenario inputs: {scenario_meta}\nTop sector impacts:\n"
                 )
                 top_n = sector_df_current.sort_values(
                     "Impact Score", ascending=False
@@ -656,7 +652,7 @@ with tab_ai:
                 )
                 with st.spinner("Generating AI summary..."):
                     out = call_ai_research(
-                        st.session_state["ai_history"], prompt, ai_level
+                        st.session_state["ai_history"], prompt, ai_style
                     )
                 st.markdown("**AI output**")
                 st.markdown(out)
@@ -684,7 +680,7 @@ with tab_reports:
 
         if sector_df_current is None:
             st.error(
-                "No scenario found. Configure a stock on the 'Live Stock Impact' tab first."
+                "No scenario found. Configure a stock move on the 'Live Stock Dashboard' tab first."
             )
         else:
             portfolio_table = None
@@ -712,8 +708,8 @@ with tab_reports:
                 mime="application/pdf",
             )
 
-# Footer
+# Footer / notes
 st.markdown("---")
 st.caption(
-    "Katta MacroSuite — decision-support analytics with Massive live data. Not investment advice."
+    "Katta MacroSuite — decision-support analytics only. Not investment advice."
 )
