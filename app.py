@@ -93,6 +93,23 @@ DEFAULT_SECTOR_STOCKS = {
     "Banks": ["JPM", "BAC", "WFC"],
 }
 
+# Simple multi-factor model (by sector)
+factors = ["Market", "Rates", "Growth", "Oil", "FX"]
+
+factor_loadings = {
+    "Tech": {"Market": 1.2, "Rates": -0.8, "Growth": 1.1, "Oil": -0.3, "FX": 0.3},
+    "Real Estate": {"Market": 1.0, "Rates": -1.2, "Growth": 0.7, "Oil": -0.2, "FX": 0.1},
+    "Luxury / Discretionary": {"Market": 1.3, "Rates": -0.7, "Growth": 1.2, "Oil": -0.4, "FX": 0.2},
+    "Bonds": {"Market": -0.3, "Rates": -1.5, "Growth": -0.4, "Oil": -0.1, "FX": 0.1},
+    "Energy": {"Market": 1.0, "Rates": -0.3, "Growth": 0.5, "Oil": 1.6, "FX": -0.1},
+    "Consumer Staples": {"Market": 0.6, "Rates": -0.2, "Growth": 0.3, "Oil": -0.1, "FX": 0.1},
+    "Banks": {"Market": 1.1, "Rates": 0.8, "Growth": 0.6, "Oil": 0.1, "FX": 0.0},
+}
+
+
+# ---------------------------
+# Helpers
+# ---------------------------
 
 def label_from_score(score: float) -> str:
     if score <= -3.5:
@@ -147,6 +164,87 @@ def compute_portfolio_exposure(portfolio_df: pd.DataFrame, sector_scores: pd.Dat
     return portfolio_score, merged[["Sector", "Allocation", "Weight", "Impact Score", "Weighted Impact"]]
 
 
+def compute_factor_exposures_for_portfolio(portfolio_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Compute factor exposures for a portfolio given sector-level factor loadings.
+    """
+    df = portfolio_df.copy()
+    if "Sector" not in df.columns or "Allocation" not in df.columns:
+        raise ValueError("Portfolio must have 'Sector' and 'Allocation' columns")
+    total = df["Allocation"].sum()
+    if total == 0:
+        df["Weight"] = 0.0
+    else:
+        df["Weight"] = df["Allocation"] / total
+
+    # map factor loadings
+    rows = []
+    for _, row in df.iterrows():
+        sec = row["Sector"]
+        w = row["Weight"]
+        fl = factor_loadings.get(sec, {})
+        for fac in factors:
+            rows.append(
+                {
+                    "Factor": fac,
+                    "Contribution": w * fl.get(fac, 0.0),
+                }
+            )
+    if not rows:
+        return pd.DataFrame(columns=["Factor", "Exposure"])
+
+    temp = pd.DataFrame(rows)
+    exposures = temp.groupby("Factor")["Contribution"].sum().reset_index()
+    exposures.rename(columns={"Contribution": "Exposure"}, inplace=True)
+    return exposures
+
+
+def compute_factor_exposures_for_sector(shocked_sector: str) -> pd.DataFrame:
+    """
+    Show factor loadings for a single sector (normalized view).
+    """
+    fl = factor_loadings.get(shocked_sector, {})
+    rows = []
+    for fac in factors:
+        rows.append({"Factor": fac, "Exposure": fl.get(fac, 0.0)})
+    return pd.DataFrame(rows)
+
+
+def estimate_impact_from_macro_scenario(exposures_df: pd.DataFrame, scenario: dict) -> float:
+    """
+    exposures_df: columns Factor, Exposure
+    scenario: dict of {Factor: ShockSize}
+    Returns scalar impact score.
+    """
+    if exposures_df is None or exposures_df.empty:
+        return 0.0
+    merged = exposures_df.copy()
+    merged["Shock"] = merged["Factor"].apply(lambda f: scenario.get(f, 0.0))
+    merged["Impact"] = merged["Exposure"] * merged["Shock"]
+    return merged["Impact"].sum()
+
+
+def simple_sentiment(text: str) -> str:
+    """
+    Tiny lexicon-based sentiment scorer for news headlines/description.
+    Just to categorize as Positive / Negative / Neutral.
+    """
+    if not text:
+        return "Neutral"
+    t = text.lower()
+    positive_words = ["gain", "growth", "beat", "surge", "rally", "strong", "up", "record"]
+    negative_words = ["loss", "fall", "drop", "plunge", "fear", "crisis", "down", "weak"]
+
+    pos = sum(w in t for w in positive_words)
+    neg = sum(w in t for w in negative_words)
+
+    if pos > neg:
+        return "Positive"
+    if neg > pos:
+        return "Negative"
+    return "Neutral"
+
+
 def call_ai_research(history, user_text: str, level: str = "Professional") -> str:
     """Call Groq Llama as a corporate research analyst (concepts, narratives)."""
     if client is None:
@@ -158,7 +256,8 @@ def call_ai_research(history, user_text: str, level: str = "Professional") -> st
     }.get(level, "Write in clear professional language.")
     system_prompt = (
         "You are an internal AI research analyst for an institutional client. "
-        "Your task: convert sector shock inputs and sector outputs into concise internal research narratives, "
+        "Your task: convert sector shock inputs, factor exposures, portfolio tilts, "
+        "and news sentiment into concise internal research narratives, "
         "scenario summaries, risk notes and suggested topics for internal follow-up. "
         "You MUST NOT provide direct buy/sell recommendations, price targets or personalized investment advice. "
         + level_line
@@ -204,27 +303,33 @@ def create_pdf_report(
         pdf.cell(0, 7, f"{k}: {v}", ln=True)
     pdf.ln(4)
 
-    # Sector impacts (optional but nice)
+    # Sector impacts
     if sector_df is not None and not sector_df.empty:
         pdf.set_font("Helvetica", "B", 12)
         pdf.cell(0, 8, "Sector Impacts:", ln=True)
         pdf.set_font("Helvetica", "", 11)
         for _, r in sector_df.iterrows():
-            pdf.cell(0, 7, f"{r['Sector']}: {r['Impact Score']} ({r['Impact Label']})", ln=True)
+            pdf.cell(
+                0,
+                7,
+                f"{r['Sector']}: {r['Impact Score']} ({r['Impact Label']})",
+                ln=True,
+            )
         pdf.ln(4)
 
     # Stock impacts
-    pdf.set_font("Helvetica", "B", 12)
-    pdf.cell(0, 8, "Stock Impacts:", ln=True)
-    pdf.set_font("Helvetica", "", 10)
-    for _, r in stock_df.iterrows():
-        pdf.cell(
-            0,
-            6,
-            f"{r['Stock']}: {r['Impact Score']} ({r['Impact Label']})",
-            ln=True,
-        )
-    pdf.ln(4)
+    if stock_df is not None and not stock_df.empty:
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.cell(0, 8, "Stock Impacts:", ln=True)
+        pdf.set_font("Helvetica", "", 10)
+        for _, r in stock_df.iterrows():
+            pdf.cell(
+                0,
+                6,
+                f"{r['Stock']}: {r['Impact Score']} ({r['Impact Label']})",
+                ln=True,
+            )
+        pdf.ln(4)
 
     # Portfolio
     if portfolio_table is not None and not portfolio_table.empty:
@@ -265,8 +370,8 @@ def render_header():
               KM
             </div>
             <div>
-              <div style="font-size:18px;font-weight:800;color:{COLORS['text']};">Katta MacroSuite — Sector → Stock Intelligence</div>
-              <div style="font-size:12px;color:#475569;">Sector shocks • Stock impact • Portfolio exposure • Live news • Internal research automation</div>
+              <div style="font-size:18px;font-weight:800;color:{COLORS['text']};">Katta MacroSuite — Sector → Stock & Risk Intelligence</div>
+              <div style="font-size:12px;color:#475569;">Sector shocks • Stock impact • Factor risk • Macro scenarios • News sentiment • Internal research automation</div>
             </div>
           </div>
         </div>
@@ -324,12 +429,15 @@ if "portfolio_df" not in st.session_state:
     st.session_state["portfolio_df"] = None
 if "ai_history" not in st.session_state:
     st.session_state["ai_history"] = []
+if "news_cache" not in st.session_state:
+    st.session_state["news_cache"] = []
 
-# Main tabs
-tab_explorer, tab_portfolio, tab_ai, tab_reports = st.tabs(
+# Main tabs (added Risk & Macro tab)
+tab_explorer, tab_portfolio, tab_risk, tab_ai, tab_reports = st.tabs(
     [
         "Sector → Stock Impact (with News)",
         "Portfolio Analyzer",
+        "Risk & Macro Scenarios",
         "AI Research Analyst",
         "Generate Report",
     ]
@@ -393,6 +501,7 @@ with tab_explorer:
         stock_df = pd.DataFrame(stock_rows)
     else:
         stock_df = pd.DataFrame(columns=["Stock", "Sector", "Impact Score", "Impact Label"])
+        stock_label = "Neutral"
 
     # Save in session for other tabs
     st.session_state["sector_df"] = sector_df
@@ -467,26 +576,47 @@ with tab_explorer:
     else:
         st.info("Add at least one stock ticker above to see stock-level impact.")
 
-    # Integrated news in this section
-    st.markdown("### 📰 Latest News for This Sector")
+    # Integrated news + sentiment in this section
+    st.markdown("### 📰 Latest News & Sentiment for This Sector")
     news_keyword = shocked_sector.split("/")[0]  # use main word like "Tech"
     articles = fetch_news(news_keyword, page_size=5)
+    st.session_state["news_cache"] = articles
 
+    sentiments = []
     if articles:
         for article in articles:
             title = article.get("title", "No title")
             desc = article.get("description", "")
             url = article.get("url", "#")
+            sent = simple_sentiment((title or "") + " " + (desc or ""))
+            sentiments.append(sent)
+
+            badge = {
+                "Positive": "background:#16a34a;color:white;",
+                "Negative": "background:#dc2626;color:white;",
+                "Neutral": "background:#6b7280;color:white;",
+            }.get(sent, "background:#6b7280;color:white;")
+
             st.markdown(
                 f"<div style='padding:10px;border-left:4px solid #0EA5E9;margin-bottom:10px;'>"
                 f"<div style='font-weight:700;font-size:15px;'>📰 {title}</div>"
-                f"<div style='font-size:13px;margin-top:4px;'>{desc}</div>"
+                f"<div style='font-size:12px;margin:4px 0;'>{desc}</div>"
+                f"<span style='font-size:11px;padding:2px 6px;border-radius:999px;{badge}'>Sentiment: {sent}</span>"
                 f"<div style='margin-top:4px;'><a href='{url}' target='_blank'>Read more →</a></div>"
                 f"</div>",
                 unsafe_allow_html=True,
             )
     else:
         st.caption("No news available or NewsAPI returned no articles for this sector keyword.")
+
+    if sentiments:
+        pos_count = sentiments.count("Positive")
+        neg_count = sentiments.count("Negative")
+        neu_count = sentiments.count("Neutral")
+        st.markdown(
+            f"**Headline sentiment summary:** "
+            f"{pos_count} positive • {neg_count} negative • {neu_count} neutral"
+        )
 
     st.caption(
         "This is a simplified, educational scenario engine — not a real-world risk model or investment advice."
@@ -542,16 +672,132 @@ with tab_portfolio:
             except Exception as e:
                 st.error(f"Analysis error: {e}")
 
+# ---------- Risk & Macro Scenarios ----------
+with tab_risk:
+    st.subheader("Multi-Factor Risk & Macro Scenario Engine")
+
+    st.markdown("#### 1) Sector Factor Profile")
+    if st.session_state.get("scenario_meta"):
+        shocked_sector_current = st.session_state["scenario_meta"].get("Shocked Sector", sectors[0])
+    else:
+        shocked_sector_current = sectors[0]
+
+    chosen_sector_for_factors = st.selectbox(
+        "View factor profile for sector",
+        sectors,
+        index=sectors.index(shocked_sector_current) if shocked_sector_current in sectors else 0,
+    )
+    sector_factor_df = compute_factor_exposures_for_sector(chosen_sector_for_factors)
+    col_f1, col_f2 = st.columns([1, 2])
+    with col_f1:
+        st.dataframe(sector_factor_df, use_container_width=True)
+    with col_f2:
+        factor_chart = (
+            alt.Chart(sector_factor_df)
+            .mark_bar()
+            .encode(
+                x=alt.X("Factor:N", sort=None),
+                y=alt.Y("Exposure:Q"),
+                tooltip=["Factor", "Exposure"],
+            )
+            .properties(height=260)
+        )
+        st.altair_chart(factor_chart, use_container_width=True)
+
+    st.markdown("#### 2) Portfolio Factor Exposures (if portfolio uploaded)")
+    portfolio_df_current = st.session_state.get("portfolio_df")
+    if portfolio_df_current is not None:
+        try:
+            exposures_df = compute_factor_exposures_for_portfolio(portfolio_df_current)
+            col_pf1, col_pf2 = st.columns([1, 2])
+            with col_pf1:
+                st.dataframe(exposures_df, use_container_width=True)
+            with col_pf2:
+                exp_chart = (
+                    alt.Chart(exposures_df)
+                    .mark_bar()
+                    .encode(
+                        x=alt.X("Factor:N", sort=None),
+                        y=alt.Y("Exposure:Q"),
+                        tooltip=["Factor", "Exposure"],
+                    )
+                    .properties(height=260)
+                )
+                st.altair_chart(exp_chart, use_container_width=True)
+        except Exception as e:
+            st.error(f"Could not compute factor exposures: {e}")
+            exposures_df = None
+    else:
+        st.info("Upload a portfolio on the 'Portfolio Analyzer' tab to see portfolio factor exposures.")
+        exposures_df = None
+
+    st.markdown("#### 3) Macro Scenario Builder")
+
+    col_m1, col_m2 = st.columns(2)
+    with col_m1:
+        rates_shock = st.slider(
+            "Rates shock (bps, + = higher yields, - = lower)",
+            -200,
+            200,
+            0,
+            step=25,
+        )
+        growth_shock = st.slider(
+            "Growth shock (relative, -5 = recession, +5 = strong boom)",
+            -5,
+            5,
+            0,
+        )
+    with col_m2:
+        oil_shock = st.slider(
+            "Oil price shock (%)",
+            -30,
+            30,
+            0,
+        )
+        risk_aversion = st.slider(
+            "Risk sentiment (risk-off ↔ risk-on)",
+            -5,
+            5,
+            0,
+            help="-5 = strong risk-off, +5 = strong risk-on",
+        )
+
+    # Map to factor shocks (simple heuristic model)
+    macro_scenario = {
+        "Market": risk_aversion / 5.0,   # +/-1 range
+        "Rates": rates_shock / 100.0,    # ~ +/-2 range
+        "Growth": growth_shock / 2.0,    # +/-2.5
+        "Oil": oil_shock / 10.0,         # +/-3
+        "FX": 0.0,                       # keep neutral for now
+    }
+
+    st.markdown("**Macro scenario factor shocks (model-internal units):**")
+    st.write(macro_scenario)
+
+    # If we have portfolio exposures, estimate impact
+    if exposures_df is not None and not exposures_df.empty:
+        est_impact = estimate_impact_from_macro_scenario(exposures_df, macro_scenario)
+        st.metric("Estimated Portfolio Impact (model units)", f"{est_impact:+.3f}")
+        if est_impact > 0.5:
+            st.success("Scenario suggests the portfolio is positively exposed to this macro environment.")
+        elif est_impact < -0.5:
+            st.warning("Scenario suggests the portfolio is negatively exposed to this macro environment.")
+        else:
+            st.info("Scenario impact on the portfolio appears modest / mixed.")
+    else:
+        st.caption("No portfolio factor exposures available yet. Upload a portfolio to see scenario impact.")
+
 # ---------- AI Research Analyst ----------
 with tab_ai:
     st.subheader("AI Research Analyst — Generate internal narratives")
     st.markdown(
         "Draft internal memos, scenario summaries, and risk notes about this sector shock, "
-        "its stock impact, and portfolio implications. (AI must be configured with GROQ_API_KEY.)"
+        "its factor/portfolio impact, and news sentiment. (AI must be configured with GROQ_API_KEY.)"
     )
 
     user_q = st.text_area(
-        "Ask the AI Research Analyst (e.g., 'Write an executive summary of this Tech sector shock and its impact on listed stocks')",
+        "Ask the AI Research Analyst (e.g., 'Write an executive summary of this scenario for PMs')",
         height=120,
     )
     ai_style = st.selectbox(
@@ -566,42 +812,54 @@ with tab_ai:
             scenario_name = st.session_state.get("scenario_name", "Current scenario")
             scenario_meta = st.session_state.get("scenario_meta", {})
             stock_df_current = st.session_state.get("stock_df")
+            portfolio_df_current = st.session_state.get("portfolio_df")
+            news_articles = st.session_state.get("news_cache", [])
 
-            if sector_df_current is None or stock_df_current is None:
-                st.error(
-                    "No scenario found. Please configure a sector shock on the 'Sector → Stock Impact (with News)' tab first."
-                )
-            else:
-                context = (
-                    f"Scenario: {scenario_name}\nScenario inputs: {scenario_meta}\nTop sector impacts:\n"
-                )
-                top_n = sector_df_current.sort_values(
-                    "Impact Score", ascending=False
-                ).head(3)
+            context = f"Scenario: {scenario_name}\nInputs: {scenario_meta}\n\n"
+
+            if sector_df_current is not None and not sector_df_current.empty:
+                context += "Top sector impacts:\n"
+                top_n = sector_df_current.sort_values("Impact Score", ascending=False).head(3)
                 for _, r in top_n.iterrows():
-                    context += (
-                        f"- {r['Sector']}: {r['Impact Score']} ({r['Impact Label']})\n"
-                    )
+                    context += f"- {r['Sector']}: {r['Impact Score']} ({r['Impact Label']})\n"
+
+            if stock_df_current is not None and not stock_df_current.empty:
                 context += "\nStocks in shocked sector:\n"
                 for _, r in stock_df_current.iterrows():
-                    context += (
-                        f"- {r['Stock']}: {r['Impact Score']} ({r['Impact Label']})\n"
-                    )
-                prompt = context + "\nUser request:\n" + user_q
+                    context += f"- {r['Stock']}: {r['Impact Score']} ({r['Impact Label']})\n"
 
-                st.session_state["ai_history"].append(
-                    {"role": "user", "content": prompt}
+            if portfolio_df_current is not None:
+                try:
+                    exp_df = compute_factor_exposures_for_portfolio(portfolio_df_current)
+                    context += "\nPortfolio factor exposures:\n"
+                    for _, r in exp_df.iterrows():
+                        context += f"- {r['Factor']}: {r['Exposure']:.3f}\n"
+                except Exception:
+                    pass
+
+            if news_articles:
+                context += "\nRecent sector news headlines and sentiment:\n"
+                for art in news_articles[:5]:
+                    title = art.get("title", "")
+                    desc = art.get("description", "")
+                    sent = simple_sentiment((title or "") + " " + (desc or ""))
+                    context += f"- {title} (Sentiment: {sent})\n"
+
+            prompt = context + "\nUser request:\n" + user_q
+
+            st.session_state["ai_history"].append(
+                {"role": "user", "content": prompt}
+            )
+            with st.spinner("Generating AI summary..."):
+                out = call_ai_research(
+                    st.session_state["ai_history"], prompt, ai_style
                 )
-                with st.spinner("Generating AI summary..."):
-                    out = call_ai_research(
-                        st.session_state["ai_history"], prompt, ai_style
-                    )
-                st.markdown("**AI output**")
-                st.markdown(out)
-                st.session_state["ai_history"].append(
-                    {"role": "assistant", "content": out}
-                )
-                st.session_state["ai_history"] = st.session_state["ai_history"][-20:]
+            st.markdown("**AI output**")
+            st.markdown(out)
+            st.session_state["ai_history"].append(
+                {"role": "assistant", "content": out}
+            )
+            st.session_state["ai_history"] = st.session_state["ai_history"][-20:]
 
 # ---------- Report Generation ----------
 with tab_reports:
@@ -629,7 +887,7 @@ with tab_reports:
             portfolio_table = None
             if include_portfolio and portfolio_df_current is not None:
                 try:
-                    score, portfolio_table = compute_portfolio_exposure(
+                    _, portfolio_table = compute_portfolio_exposure(
                         portfolio_df_current, sector_df_current
                     )
                 except Exception as e:
