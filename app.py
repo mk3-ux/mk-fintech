@@ -12,7 +12,7 @@ from fpdf import FPDF
 
 # 🔴 IMPORTANT: paste your real keys here on your machine
 MASSIVE_API_KEY = "Q1pmrfqv0vV6caqxpJUjwcyEsSEvvSJU"   # e.g. Q1pmrfqv0vV6caqxpJUj...
-NEWSAPI_KEY = ""          # e.g. 4f0f0589...
+NEWSAPI_KEY = "4f0f0589094c414a8ef178ee05c9226d"
 
 # Optional: you can also hard-code Groq key instead of env if you want
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
