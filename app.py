@@ -1,16 +1,23 @@
-# katta_macro_suite.py
 import os
 import streamlit as st
 import pandas as pd
 import altair as alt
 from groq import Groq
 from fpdf import FPDF
+import requests
+
+# optional market data dependency
+try:
+    import yfinance as yf
+except ImportError:
+    yf = None
 
 # ---------------------------
 # Config / Client
 # ---------------------------
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 MODEL_NAME = "llama-3.1-8b-instant"
+NEWS_API_KEY = os.getenv("NEWS_API_KEY")
 
 client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
@@ -57,9 +64,94 @@ sectors = [
 # ---------------------------
 # Helpers
 # ---------------------------
+def get_realtime_stock_data(ticker: str):
+    """
+    Fetch live-ish stock price info using yfinance.
+    Returns dict with keys:
+      price, open, previous_close, change, change_pct, currency
+    or None / {'error': ...} if unavailable.
+    """
+    if not ticker:
+        return None
+    if yf is None:
+        return {"error": "yfinance is not installed. Add 'yfinance' to requirements.txt."}
+    try:
+        t = yf.Ticker(ticker)
+        info = getattr(t, "fast_info", None)
+        if info:
+            last = float(info.get("lastPrice") or info.get("last_price") or 0)
+            prev_close = float(info.get("previousClose") or info.get("previous_close") or 0)
+        else:
+            hist = t.history(period="2d")
+            if hist.empty:
+                return {"error": "No market data returned for this ticker."}
+            last = float(hist["Close"].iloc[-1])
+            prev_close = float(hist["Close"].iloc[-2]) if len(hist) > 1 else last
+
+        if last == 0:
+            return {"error": "Invalid last price from data source."}
+
+        change = last - prev_close
+        change_pct = (change / prev_close * 100) if prev_close else 0.0
+        currency = getattr(info, "currency", None) if info else None
+        if not currency:
+            currency = "USD"
+
+        return {
+            "price": round(last, 2),
+            "previous_close": round(prev_close, 2),
+            "change": round(change, 2),
+            "change_pct": round(change_pct, 2),
+            "currency": currency,
+        }
+    except Exception as e:
+        return {"error": f"Market data error: {e}"}
+
+
+def fetch_stock_news(query: str, limit: int = 5):
+    """
+    Fetch recent news for the stock using NewsAPI.
+    Requires NEWS_API_KEY in environment / secrets.
+    Returns list of dicts with: title, source, url, published_at, description.
+    """
+    if not query:
+        return []
+    if not NEWS_API_KEY:
+        return []
+
+    try:
+        url = "https://newsapi.org/v2/everything"
+        params = {
+            "q": query,
+            "language": "en",
+            "sortBy": "publishedAt",
+            "pageSize": limit,
+            "apiKey": NEWS_API_KEY,
+        }
+        resp = requests.get(url, params=params, timeout=8)
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
+        articles = data.get("articles", [])[:limit]
+        cleaned = []
+        for a in articles:
+            cleaned.append(
+                {
+                    "title": a.get("title"),
+                    "source": (a.get("source") or {}).get("name"),
+                    "url": a.get("url"),
+                    "published_at": a.get("publishedAt"),
+                    "description": a.get("description"),
+                }
+            )
+        return cleaned
+    except Exception:
+        return []
+
+
 def compute_stock_sector_impacts(stock_move: float, primary_sector: str) -> pd.DataFrame:
     """
-    Simple stock→sector sensitivity model.
+    Simple stock→sector sensitivity model, with a bit of hedge-fund-style framing.
 
     - Primary sector gets sensitivity 1.0
     - All other sectors get spillover sensitivity 0.4
@@ -104,7 +196,19 @@ def compute_stock_sector_impacts(stock_move: float, primary_sector: str) -> pd.D
 
     df["Impact Label"] = df["Impact Score"].apply(label)
 
-    return df[["Sector", "Impact Score", "Impact Label"]]
+    # Light hedge-fund style risk buckets for flavor
+    bucket_map = {
+        "Tech": "Cyclical / Growth",
+        "Luxury / Discretionary": "Cyclical / Consumer",
+        "Energy": "Commodity / Cyclical",
+        "Banks": "Rate / Financials",
+        "Real Estate": "Rate / Real Assets",
+        "Consumer Staples": "Defensive",
+        "Bonds": "Rates / Duration",
+    }
+    df["HF Risk Bucket"] = df["Sector"].map(bucket_map).fillna("General Equity")
+
+    return df[["Sector", "HF Risk Bucket", "Impact Score", "Impact Label"]]
 
 
 def compute_portfolio_exposure(portfolio_df: pd.DataFrame, sector_scores: pd.DataFrame):
@@ -121,7 +225,7 @@ def compute_portfolio_exposure(portfolio_df: pd.DataFrame, sector_scores: pd.Dat
     else:
         df["Weight"] = df["Allocation"] / total
 
-    merged = df.merge(sector_scores, on="Sector", how="left")
+    merged = df.merge(sector_scores[["Sector", "Impact Score"]], on="Sector", how="left")
     merged["Impact Score"].fillna(0.0, inplace=True)
     merged["Weighted Impact"] = merged["Weight"] * merged["Impact Score"]
     portfolio_score = merged["Weighted Impact"].sum()
@@ -244,7 +348,7 @@ def render_header():
             </div>
             <div>
               <div style="font-size:18px;font-weight:800;color:{COLORS['text']};">Katta MacroSuite — Markets Intelligence</div>
-              <div style="font-size:12px;color:#475569;">Single-stock impact • Sector sensitivity • Portfolio exposure • Internal research automation</div>
+              <div style="font-size:12px;color:#475569;">Single-stock impact • Sector sensitivity • Portfolio exposure • Internal research automation • Live prices & headlines</div>
             </div>
           </div>
         </div>
@@ -265,6 +369,10 @@ with st.sidebar:
         st.warning(
             "Groq API not configured — AI Research Analyst disabled until GROQ_API_KEY is set."
         )
+    if not NEWS_API_KEY:
+        st.info("Optional: set NEWS_API_KEY to enable live stock headlines.")
+    if yf is None:
+        st.info("Optional: add 'yfinance' to requirements.txt to enable live prices.")
     st.markdown(
         "Upload a CSV portfolio (columns: Sector, Allocation). Allocation can be percent or units."
     )
@@ -293,33 +401,109 @@ tab_explorer, tab_portfolio, tab_whatif, tab_scenarios, tab_ai, tab_reports = st
 with tab_explorer:
     st.subheader("Single-Stock Impact Explorer — Stock → Sector Sensitivity")
 
-    stock_name = st.text_input("Stock name / ticker", "AAPL")
-    primary_sector = st.selectbox(
-        "Primary sector for this stock",
-        sectors,
-        index=0,
-        help="Which sector best represents this stock?",
-    )
-    stock_move = st.slider(
-        "Assumed stock price move (%)",
-        -20,
-        20,
-        0,
-        help="Negative = stock down, Positive = stock up",
-    )
+    col_left, col_right = st.columns([2, 2])
+
+    with col_left:
+        raw_stock_input = st.text_input(
+            "Stock ticker / name", "AAPL", help="Use an exchange ticker like AAPL, MSFT, JPM, etc."
+        )
+        ticker = raw_stock_input.strip().upper()
+
+        primary_sector = st.selectbox(
+            "Primary sector for this stock",
+            sectors,
+            index=0,
+            help="Which sector best represents this stock?",
+        )
+
+        move_mode = st.radio(
+            "Stock move source",
+            ["Manual % move", "Use live market move"],
+            index=0,
+            help="Hedge-fund style: you can either hard-code a stress move or link it to the live market move.",
+        )
+
+        manual_stock_move = st.slider(
+            "Assumed stock price move (%) (manual)",
+            -20,
+            20,
+            0,
+            help="Negative = stock down, Positive = stock up",
+        )
+
+        live_data = None
+        stock_move = manual_stock_move
+
+        if move_mode == "Use live market move":
+            live_data = get_realtime_stock_data(ticker)
+            if live_data and not live_data.get("error"):
+                stock_move = live_data.get("change_pct", 0.0) or 0.0
+                st.caption(
+                    f"Using live % move from previous close: {stock_move:+.2f}%"
+                )
+            else:
+                stock_move = manual_stock_move
+                if live_data and live_data.get("error"):
+                    st.warning(
+                        f"Live data not available for {ticker}: {live_data.get('error')}. Falling back to manual slider."
+                    )
+
+        # save latest live data for other tabs if needed
+        st.session_state["live_stock_data"] = live_data
+
+    with col_right:
+        st.markdown("#### Live market snapshot")
+        live_data = st.session_state.get("live_stock_data")
+        if live_data and not live_data.get("error"):
+            price = live_data["price"]
+            change = live_data["change"]
+            change_pct = live_data["change_pct"]
+            currency = live_data["currency"]
+            delta_str = f"{change:+.2f} ({change_pct:+.2f}%)"
+            st.metric(
+                label=f"{ticker} price ({currency})",
+                value=f"{price:.2f}",
+                delta=delta_str,
+            )
+        elif live_data and live_data.get("error"):
+            st.error(live_data.get("error"))
+        else:
+            if yf is None:
+                st.caption("Install yfinance to see live price snapshot.")
+            else:
+                st.caption("Select 'Use live market move' to fetch a live snapshot.")
+
+        st.markdown("#### Latest headlines")
+        if NEWS_API_KEY:
+            news_items = fetch_stock_news(ticker or raw_stock_input, limit=5)
+            if not news_items:
+                st.caption("No recent headlines found for this name (or API limit reached).")
+            else:
+                for n in news_items:
+                    title = n.get("title") or "No title"
+                    src = n.get("source") or "Unknown"
+                    url = n.get("url") or "#"
+                    st.markdown(
+                        f"- [{title}]({url})  \n"
+                        f"  <span style='font-size:11px;color:#6b7280;'>Source: {src}</span>",
+                        unsafe_allow_html=True,
+                    )
+        else:
+            st.caption("Set NEWS_API_KEY to pull live headlines for this ticker.")
 
     st.caption(
-        "This page uses a simple, illustrative sensitivity model: the chosen stock has the "
-        "strongest impact on its primary sector, and a smaller spillover impact on other sectors."
+        "This page uses a simplified, educational sensitivity model. Live prices & news make it feel like a hedge-fund blotter, "
+        "but it's still not a real risk model or investment advice."
     )
 
     sector_df = compute_stock_sector_impacts(stock_move, primary_sector)
 
-    scenario_name = f"{stock_name} move {stock_move:+.1f}%"
+    scenario_name = f"{ticker or raw_stock_input} move {stock_move:+.1f}%"
     scenario_meta = {
-        "Stock": stock_name,
+        "Stock": ticker or raw_stock_input,
         "Move (%)": stock_move,
         "Primary Sector": primary_sector,
+        "Move source": "Live market" if move_mode == "Use live market move" else "Manual slider",
     }
     st.session_state["sector_df"] = sector_df
     st.session_state["scenario_name"] = scenario_name
@@ -327,7 +511,7 @@ with tab_explorer:
 
     col1, col2 = st.columns([2, 3])
     with col1:
-        st.markdown("#### Sector Impact from this Stock Move")
+        st.markdown("#### Sector impact from this stock move")
         st.dataframe(
             sector_df.style.format({"Impact Score": "{:+.2f}"}),
             use_container_width=True,
@@ -335,35 +519,42 @@ with tab_explorer:
         )
 
     with col2:
-        st.markdown("#### Visual Overview")
+        st.markdown("#### Visual overview (impact score)")
         chart = (
             alt.Chart(sector_df)
             .mark_bar()
             .encode(
                 x=alt.X("Sector:N", sort=None),
                 y=alt.Y("Impact Score:Q"),
-                tooltip=["Sector", "Impact Score", "Impact Label"],
+                color=alt.Color("HF Risk Bucket:N"),
+                tooltip=["Sector", "HF Risk Bucket", "Impact Score", "Impact Label"],
             )
             .properties(height=360)
         )
         st.altair_chart(chart, use_container_width=True)
 
-    st.markdown("#### Quick take")
+    st.markdown("#### Hedge-fund style quick take")
     sorted_df = sector_df.sort_values("Impact Score", ascending=False)
     winners = sorted_df.head(2)
     losers = sorted_df.tail(2)
     winner_text = ", ".join(
-        f"{row.Sector} ({row['Impact Label']})" for _, row in winners.iterrows()
+        f"{row.Sector} ({row['Impact Label']}, {row['HF Risk Bucket']})"
+        for _, row in winners.iterrows()
     )
     loser_text = ", ".join(
-        f"{row.Sector} ({row['Impact Label']})" for _, row in losers.iterrows()
+        f"{row.Sector} ({row['Impact Label']}, {row['HF Risk Bucket']})"
+        for _, row in losers.iterrows()
     )
+
+    direction = "bullish" if stock_move > 0 else "bearish" if stock_move < 0 else "flat"
     st.markdown(
-        f"- **Most positively exposed to this stock move:** {winner_text}  \n"
-        f"- **Most negatively exposed / least helped:** {loser_text}"
+        f"- **Direction of shock:** {direction} single-name move of **{stock_move:+.2f}%**.  \n"
+        f"- **Crowded long-style beneficiaries:** {winner_text}  \n"
+        f"- **Natural hedge / short candidates (conceptually, not advice):** {loser_text}  \n"
+        f"- **Decomposition (rule-of-thumb):** Treat ~70% of this move as sector/market factor and ~30% as idiosyncratic noise."
     )
     st.caption(
-        "This is a simplified, educational sensitivity model — not a real-world risk model or investment advice."
+        "Language above mimics hedge-fund risk commentary, but this app does not generate trade ideas or recommendations."
     )
 
     # Save scenario to library
@@ -631,12 +822,7 @@ with tab_reports:
                 "No scenario found. Please configure a stock move on the 'Stock Impact Explorer' tab first."
             )
         else:
-            # re-use base portfolio if user uploaded in Portfolio Analyzer
-            uploaded_portfolio = st.session_state.get("upload_portfolio_base")
             portfolio_table = None
-
-            # we can't re-read from widget directly, so just skip including portfolio here
-            # unless you want to re-upload – this keeps it simple and free.
             if include_portfolio:
                 st.info(
                     "To include portfolio details in the PDF, you can also run this app "
