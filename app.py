@@ -2,12 +2,9 @@ import os
 import streamlit as st
 import pandas as pd
 import altair as alt
-import plotly.express as px
 from groq import Groq
 from fpdf import FPDF
 import requests  # NewsAPI
-import yfinance as yf
-from textblob import TextBlob
 
 # ---------------------------
 # Config / Client
@@ -37,7 +34,7 @@ st.markdown(
     f"""
     <style>
         .stApp {{ background-color: {COLORS['bg']}; color: {COLORS['text']}; }}
-        .block-container {{ max-width: 1400px; padding-top: 1.2rem; padding-bottom: 2rem; }}
+        .block-container {{ max-width: 1200px; padding-top: 1.2rem; padding-bottom: 2rem; }}
         button[data-baseweb="tab"] {{ border-radius: 999px !important; padding: 0.3rem 1rem !important; }}
     </style>
     """,
@@ -485,4 +482,53 @@ with tab_reports:
 
         if sector_df_current is None:
             st.error(
-                "No scenario found. Please configure a stock move on the
+                "No scenario found. Please configure a stock move on the 'Stock Impact Explorer' tab first."
+            )
+        else:
+            portfolio_table = None
+            if include_portfolio and portfolio_df_current is not None:
+                try:
+                    _, portfolio_table = compute_portfolio_exposure(
+                        portfolio_df_current, sector_df_current
+                    )
+                except Exception as e:
+                    st.error(f"Cannot include portfolio: {e}")
+                    portfolio_table = None
+
+            pdf_bytes = create_pdf_report(
+                report_title,
+                scenario_name,
+                scenario_meta,
+                sector_df_current,
+                portfolio_table,
+                ai_summary_for_report,
+            )
+            st.download_button(
+                "Download PDF report",
+                data=pdf_bytes,
+                file_name="katta_report.pdf",
+                mime="application/pdf",
+            )
+
+# ---------- Finance News ----------
+with tab_news:
+    st.subheader("Finance News — Live from NewsAPI")
+    news_keyword = st.text_input("Enter keyword for news", "finance")
+    articles = fetch_news(news_keyword, page_size=10)
+
+    if articles:
+        for article in articles:
+            st.markdown(f"### {article['title']}")
+            st.write(article.get("description", "No description available."))
+            st.write(f"[Read more]({article['url']})")
+            st.write("---")
+    else:
+        st.write("No news found or failed to fetch from NewsAPI.")
+
+# Footer / notes
+st.markdown("---")
+st.caption(
+    "Katta MacroSuite — decision-support analytics. Not investment advice. For internal corporate use."
+)
+
+
