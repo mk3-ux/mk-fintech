@@ -4,17 +4,15 @@ import pandas as pd
 import altair as alt
 from groq import Groq
 from fpdf import FPDF
-import requests  # NewsAPI
+import requests
 
 # ---------------------------
-# Config / Client
+# Config / Clients
 # ---------------------------
+
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 MODEL_NAME = "llama-3.1-8b-instant"
 client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
-
-NEWSAPI_KEY = os.getenv("NEWSAPI_KEY", "")
-NEWSAPI_URL = "https://newsapi.org/v2/everything"
 
 st.set_page_config(
     page_title="Katta Finsight",
@@ -22,21 +20,18 @@ st.set_page_config(
     page_icon="📊",
 )
 
-# Light theme colors (simple)
 COLORS = {
     "bg": "#F7FAFF",
     "text": "#0F172A",
-    "card": "#FFFFFF",
     "accent": "#0EA5E9",
     "subtle": "#E6EEF8",
 }
 
-# Small CSS polish
 st.markdown(
     f"""
     <style>
         .stApp {{ background-color: {COLORS['bg']}; color: {COLORS['text']}; }}
-        .block-container {{ max-width: 1200px; padding-top: 1.2rem; padding-bottom: 2rem; }}
+        .block-container {{ max-width: 1200px; padding-top: 1rem; padding-bottom: 2rem; }}
         button[data-baseweb="tab"] {{ border-radius: 999px !important; padding: 0.3rem 1rem !important; }}
     </style>
     """,
@@ -44,10 +39,15 @@ st.markdown(
 )
 
 # ---------------------------
-# NewsAPI helper
+# News API
 # ---------------------------
-def fetch_news(keyword="finance", page_size=5):
-    """Fetch latest news articles for a given keyword."""
+
+NEWSAPI_KEY = "4f0f0589094c414a8ef178ee05c9226d"
+NEWSAPI_URL = "https://newsapi.org/v2/everything"
+
+
+def fetch_news(keyword: str = "finance", page_size: int = 5):
+    """Fetch latest news articles for a given keyword using NewsAPI."""
     if not NEWSAPI_KEY:
         return []
     params = {
@@ -68,9 +68,11 @@ def fetch_news(keyword="finance", page_size=5):
         print(f"NewsAPI error: {e}")
         return []
 
+
 # ---------------------------
 # Model / Data definitions
 # ---------------------------
+
 sectors = [
     "Tech",
     "Real Estate",
@@ -91,9 +93,7 @@ DEFAULT_SECTOR_STOCKS = {
     "Banks": ["JPM", "BAC", "WFC"],
 }
 
-# ---------------------------
-# Helpers
-# ---------------------------
+
 def label_from_score(score: float) -> str:
     if score <= -3.5:
         return "Strong Negative"
@@ -108,9 +108,8 @@ def label_from_score(score: float) -> str:
 
 def compute_sector_impacts(sector_move: float, shocked_sector: str) -> pd.DataFrame:
     """
-    Sector → Sector sensitivity:
-    - Shocked sector: sensitivity 1.0
-    - Other sectors: spillover 0.4
+    Sector → Sector sensitivity.
+    Shocked sector gets sensitivity 1.0, others 0.4.
     """
     rows = []
     for sec in sectors:
@@ -129,14 +128,18 @@ def compute_sector_impacts(sector_move: float, shocked_sector: str) -> pd.DataFr
 
 def compute_portfolio_exposure(portfolio_df: pd.DataFrame, sector_scores: pd.DataFrame):
     """
-    Expects portfolio_df with columns: Sector, Allocation (as percent or fraction)
+    Expects portfolio_df with columns: Sector, Allocation (as percent or fraction).
     Returns weighted exposure and breakdown.
     """
     df = portfolio_df.copy()
-    if "Allocation" not in df.columns or "Sector" not in df.columns:
+    if "Sector" not in df.columns or "Allocation" not in df.columns:
         raise ValueError("Uploaded portfolio must contain 'Sector' and 'Allocation' columns")
     total = df["Allocation"].sum()
-    df["Weight"] = df["Allocation"] / total if total else 0.0
+    if total == 0:
+        df["Weight"] = 0.0
+    else:
+        df["Weight"] = df["Allocation"] / total
+
     merged = df.merge(sector_scores, on="Sector", how="left")
     merged["Impact Score"].fillna(0.0, inplace=True)
     merged["Weighted Impact"] = merged["Weight"] * merged["Impact Score"]
@@ -145,6 +148,7 @@ def compute_portfolio_exposure(portfolio_df: pd.DataFrame, sector_scores: pd.Dat
 
 
 def call_ai_research(history, user_text: str, level: str = "Professional") -> str:
+    """Call Groq Llama as a corporate research analyst (concepts, narratives)."""
     if client is None:
         return "AI Research Analyst not configured. Set GROQ_API_KEY in environment or Streamlit Secrets."
     level_line = {
@@ -179,7 +183,8 @@ def create_pdf_report(
     title: str,
     scenario_name: str,
     scenario_meta: dict,
-    sector_df: pd.DataFrame,
+    stock_df: pd.DataFrame,
+    sector_df: pd.DataFrame = None,
     portfolio_table: pd.DataFrame = None,
     ai_summary: str = "",
 ):
@@ -199,25 +204,44 @@ def create_pdf_report(
         pdf.cell(0, 7, f"{k}: {v}", ln=True)
     pdf.ln(4)
 
+    # Sector impacts (optional but nice)
+    if sector_df is not None and not sector_df.empty:
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.cell(0, 8, "Sector Impacts:", ln=True)
+        pdf.set_font("Helvetica", "", 11)
+        for _, r in sector_df.iterrows():
+            pdf.cell(0, 7, f"{r['Sector']}: {r['Impact Score']} ({r['Impact Label']})", ln=True)
+        pdf.ln(4)
+
+    # Stock impacts
     pdf.set_font("Helvetica", "B", 12)
-    pdf.cell(0, 8, "Sector Impacts:", ln=True)
-    pdf.set_font("Helvetica", "", 11)
-    for _, r in sector_df.iterrows():
-        pdf.cell(0, 7, f"{r['Sector']}: {r['Impact Score']} ({r['Impact Label']})", ln=True)
+    pdf.cell(0, 8, "Stock Impacts:", ln=True)
+    pdf.set_font("Helvetica", "", 10)
+    for _, r in stock_df.iterrows():
+        pdf.cell(
+            0,
+            6,
+            f"{r['Stock']}: {r['Impact Score']} ({r['Impact Label']})",
+            ln=True,
+        )
     pdf.ln(4)
 
+    # Portfolio
     if portfolio_table is not None and not portfolio_table.empty:
         pdf.set_font("Helvetica", "B", 12)
         pdf.cell(0, 8, "Portfolio Exposure (sample):", ln=True)
         pdf.set_font("Helvetica", "", 10)
         for _, r in portfolio_table.iterrows():
             pdf.cell(
-                0, 6,
-                f"{r['Sector']}: Allocation {r['Allocation']}, WeightedImpact {r['Weighted Impact']:.3f}",
+                0,
+                6,
+                f"{r['Sector']}: Allocation {r['Allocation']}, "
+                f"WeightedImpact {r['Weighted Impact']:.3f}",
                 ln=True,
             )
         pdf.ln(4)
 
+    # AI summary
     if ai_summary:
         pdf.set_font("Helvetica", "B", 12)
         pdf.cell(0, 8, "AI Research Summary:", ln=True)
@@ -231,6 +255,7 @@ def create_pdf_report(
 # ---------------------------
 # UI Rendering
 # ---------------------------
+
 def render_header():
     st.markdown(
         f"""
@@ -269,15 +294,17 @@ with st.sidebar:
             "Groq API not configured — AI Research Analyst disabled until GROQ_API_KEY is set."
         )
 
-    if not NEWSAPI_KEY:
-        st.info("Optional: Set NEWSAPI_KEY for live sector news.")
-
     st.markdown(
         "Upload a CSV portfolio (columns: Sector, Allocation). "
         "Allocation can be percent or units."
     )
 
     st.markdown("---")
+
+    if not NEWSAPI_KEY:
+        st.info("Set NEWSAPI_KEY for live sector news.")
+    else:
+        st.caption("News headlines powered by NewsAPI.org")
 
     st.caption(
         "This platform is a decision-support tool. "
@@ -287,6 +314,8 @@ with st.sidebar:
 # Init session state
 if "sector_df" not in st.session_state:
     st.session_state["sector_df"] = None
+if "stock_df" not in st.session_state:
+    st.session_state["stock_df"] = None
 if "scenario_name" not in st.session_state:
     st.session_state["scenario_name"] = None
 if "scenario_meta" not in st.session_state:
@@ -296,10 +325,10 @@ if "portfolio_df" not in st.session_state:
 if "ai_history" not in st.session_state:
     st.session_state["ai_history"] = []
 
-# Main tabs (no separate News tab now)
+# Main tabs
 tab_explorer, tab_portfolio, tab_ai, tab_reports = st.tabs(
     [
-        "Sector → Stock Explorer",
+        "Sector → Stock Impact (with News)",
         "Portfolio Analyzer",
         "AI Research Analyst",
         "Generate Report",
@@ -347,8 +376,27 @@ with tab_explorer:
         "Stocks in Sector": ", ".join(stocks),
     }
 
+    # Stock-level impact: all listed stocks inherit the shocked sector's Impact Score
+    if stocks:
+        shocked_row = sector_df[sector_df["Sector"] == shocked_sector].iloc[0]
+        stock_score = shocked_row["Impact Score"]
+        stock_label = shocked_row["Impact Label"]
+        stock_rows = [
+            {
+                "Stock": s,
+                "Sector": shocked_sector,
+                "Impact Score": stock_score,
+                "Impact Label": stock_label,
+            }
+            for s in stocks
+        ]
+        stock_df = pd.DataFrame(stock_rows)
+    else:
+        stock_df = pd.DataFrame(columns=["Stock", "Sector", "Impact Score", "Impact Label"])
+
     # Save in session for other tabs
     st.session_state["sector_df"] = sector_df
+    st.session_state["stock_df"] = stock_df
     st.session_state["scenario_name"] = scenario_name
     st.session_state["scenario_meta"] = scenario_meta
 
@@ -392,23 +440,7 @@ with tab_explorer:
 
     # Stock-level impact for the shocked sector
     st.markdown("### Stock Impact in the Shocked Sector")
-    if stocks:
-        # All listed stocks inherit the shocked sector's Impact Score in this simple model
-        shocked_row = sector_df[sector_df["Sector"] == shocked_sector].iloc[0]
-        stock_score = shocked_row["Impact Score"]
-        stock_label = shocked_row["Impact Label"]
-
-        stock_rows = [
-            {
-                "Stock": s,
-                "Sector": shocked_sector,
-                "Impact Score": stock_score,
-                "Impact Label": stock_label,
-            }
-            for s in stocks
-        ]
-        stock_df = pd.DataFrame(stock_rows)
-
+    if not stock_df.empty:
         col3, col4 = st.columns([2, 3])
         with col3:
             st.markdown("#### Stocks in Shocked Sector")
@@ -437,7 +469,7 @@ with tab_explorer:
 
     # Integrated news in this section
     st.markdown("### 📰 Latest News for This Sector")
-    news_keyword = shocked_sector.split("/")[0]  # e.g., use "Tech" from "Tech"
+    news_keyword = shocked_sector.split("/")[0]  # use main word like "Tech"
     articles = fetch_news(news_keyword, page_size=5)
 
     if articles:
@@ -445,14 +477,16 @@ with tab_explorer:
             title = article.get("title", "No title")
             desc = article.get("description", "")
             url = article.get("url", "#")
-            st.markdown(f"**📰 {title}**")
-            if desc:
-                st.write(desc)
-            if url and url != "#":
-                st.markdown(f"[Read more]({url})")
-            st.write("---")
+            st.markdown(
+                f"<div style='padding:10px;border-left:4px solid #0EA5E9;margin-bottom:10px;'>"
+                f"<div style='font-weight:700;font-size:15px;'>📰 {title}</div>"
+                f"<div style='font-size:13px;margin-top:4px;'>{desc}</div>"
+                f"<div style='margin-top:4px;'><a href='{url}' target='_blank'>Read more →</a></div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
     else:
-        st.caption("No news available or NewsAPI key not configured for this sector search.")
+        st.caption("No news available or NewsAPI returned no articles for this sector keyword.")
 
     st.caption(
         "This is a simplified, educational scenario engine — not a real-world risk model or investment advice."
@@ -480,7 +514,7 @@ with tab_portfolio:
 
         if sector_df_current is None:
             st.error(
-                "No scenario found. Please configure a sector shock on the 'Sector → Stock Explorer' tab first."
+                "No scenario found. Please configure a sector shock on the 'Sector → Stock Impact (with News)' tab first."
             )
         elif portfolio_df_current is None:
             st.error("Please upload a portfolio CSV first.")
@@ -531,10 +565,11 @@ with tab_ai:
             sector_df_current = st.session_state.get("sector_df")
             scenario_name = st.session_state.get("scenario_name", "Current scenario")
             scenario_meta = st.session_state.get("scenario_meta", {})
+            stock_df_current = st.session_state.get("stock_df")
 
-            if sector_df_current is None:
+            if sector_df_current is None or stock_df_current is None:
                 st.error(
-                    "No scenario found. Please configure a sector shock on the 'Sector → Stock Explorer' tab first."
+                    "No scenario found. Please configure a sector shock on the 'Sector → Stock Impact (with News)' tab first."
                 )
             else:
                 context = (
@@ -547,7 +582,13 @@ with tab_ai:
                     context += (
                         f"- {r['Sector']}: {r['Impact Score']} ({r['Impact Label']})\n"
                     )
+                context += "\nStocks in shocked sector:\n"
+                for _, r in stock_df_current.iterrows():
+                    context += (
+                        f"- {r['Stock']}: {r['Impact Score']} ({r['Impact Label']})\n"
+                    )
                 prompt = context + "\nUser request:\n" + user_q
+
                 st.session_state["ai_history"].append(
                     {"role": "user", "content": prompt}
                 )
@@ -575,19 +616,20 @@ with tab_reports:
 
     if st.button("Create PDF Report"):
         sector_df_current = st.session_state.get("sector_df")
+        stock_df_current = st.session_state.get("stock_df")
         scenario_name = st.session_state.get("scenario_name", "Current scenario")
         scenario_meta = st.session_state.get("scenario_meta", {})
         portfolio_df_current = st.session_state.get("portfolio_df")
 
-        if sector_df_current is None:
+        if sector_df_current is None or stock_df_current is None or stock_df_current.empty:
             st.error(
-                "No scenario found. Please configure a sector shock on the 'Sector → Stock Explorer' tab first."
+                "No scenario found. Please configure a sector shock and stocks on the 'Sector → Stock Impact (with News)' tab first."
             )
         else:
             portfolio_table = None
             if include_portfolio and portfolio_df_current is not None:
                 try:
-                    _, portfolio_table = compute_portfolio_exposure(
+                    score, portfolio_table = compute_portfolio_exposure(
                         portfolio_df_current, sector_df_current
                     )
                 except Exception as e:
@@ -598,6 +640,7 @@ with tab_reports:
                 report_title,
                 scenario_name,
                 scenario_meta,
+                stock_df_current,
                 sector_df_current,
                 portfolio_table,
                 ai_summary_for_report,
