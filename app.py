@@ -1,41 +1,26 @@
+# katta_macro_suite.py
 import os
-import requests
 import streamlit as st
 import pandas as pd
 import altair as alt
+from groq import Groq
 from fpdf import FPDF
 
-# Groq client is optional – app still runs without it
-try:
-    from groq import Groq
-except ImportError:
-    Groq = None
-
 # ---------------------------
-# API KEYS (HARD-CODED HERE)
+# Config / Client
 # ---------------------------
-# 🔴 IMPORTANT: replace these three with your real keys:
-GROQ_API_KEY = "Ygsk_18WeDlIgcHuC3C4FcyQnWGdyb3FYrF2m2CUVLYghyvJtTFcFlLRq"
-MASSIVE_API_KEY = "Q1pmrfqv0vV6caqxpJUjwcyEsSEvvSJU"   # (Polygon/Massive key)
-NEWSAPI_KEY = "4f0f0589094c414a8ef178ee05c9226d"
-
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 MODEL_NAME = "llama-3.1-8b-instant"
-client = (
-    Groq(api_key=GROQ_API_KEY)
-    if (Groq and GROQ_API_KEY and "YOUR_GROQ_API_KEY" not in GROQ_API_KEY)
-    else None
-)
 
-# Massive (Polygon) base URL
-MASSIVE_BASE_URL = "https://api.polygon.io"
-NEWSAPI_URL = "https://newsapi.org/v2/everything"
+client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
 st.set_page_config(
-    page_title="Katta Finsight – Stock Hedge Fund Lab",
+    page_title="Katta Finsight",
     layout="wide",
     page_icon="📊",
 )
 
+# Light theme colors (simple)
 COLORS = {
     "bg": "#F7FAFF",
     "text": "#0F172A",
@@ -44,6 +29,7 @@ COLORS = {
     "subtle": "#E6EEF8",
 }
 
+# Small CSS polish
 st.markdown(
     f"""
     <style>
@@ -56,10 +42,9 @@ st.markdown(
 )
 
 # ---------------------------
-# Static model definitions
+# Model / Data definitions
 # ---------------------------
-
-SECTORS = [
+sectors = [
     "Tech",
     "Real Estate",
     "Luxury / Discretionary",
@@ -69,177 +54,35 @@ SECTORS = [
     "Banks",
 ]
 
-FACTORS = [
-    "Market Move",
-    "Sector Move",
-    "Earnings Surprise",
-    "News Sentiment",
-]
-
-# Toy hedge-fund style factor loadings by sector
-SECTOR_FACTOR_WEIGHTS = {
-    "Tech": {
-        "Market Move": 1.2,
-        "Sector Move": 1.0,
-        "Earnings Surprise": 0.9,
-        "News Sentiment": 0.8,
-    },
-    "Real Estate": {
-        "Market Move": 0.8,
-        "Sector Move": 0.9,
-        "Earnings Surprise": 0.5,
-        "News Sentiment": 0.4,
-    },
-    "Luxury / Discretionary": {
-        "Market Move": 1.1,
-        "Sector Move": 0.9,
-        "Earnings Surprise": 1.0,
-        "News Sentiment": 0.9,
-    },
-    "Bonds": {
-        "Market Move": -0.6,
-        "Sector Move": -0.3,
-        "Earnings Surprise": 0.1,
-        "News Sentiment": 0.2,
-    },
-    "Energy": {
-        "Market Move": 0.7,
-        "Sector Move": 1.1,
-        "Earnings Surprise": 0.6,
-        "News Sentiment": 0.7,
-    },
-    "Consumer Staples": {
-        "Market Move": 0.5,
-        "Sector Move": 0.4,
-        "Earnings Surprise": 0.4,
-        "News Sentiment": 0.3,
-    },
-    "Banks": {
-        "Market Move": 1.0,
-        "Sector Move": 0.7,
-        "Earnings Surprise": 0.8,
-        "News Sentiment": 0.6,
-    },
-}
-
-# For simpler single-factor effects
-SECTOR_BASE_SENSITIVITY = {
-    "Tech": 1.0,
-    "Real Estate": 0.6,
-    "Luxury / Discretionary": 0.8,
-    "Bonds": -0.4,
-    "Energy": 0.5,
-    "Consumer Staples": 0.3,
-    "Banks": 0.7,
-}
-
 # ---------------------------
-# External API helpers (Massive + NewsAPI)
+# Helpers
 # ---------------------------
+def compute_stock_sector_impacts(stock_move: float, primary_sector: str) -> pd.DataFrame:
+    """
+    Simple stock→sector sensitivity model.
 
-def fetch_massive_snapshot(ticker: str):
-    """Get live snapshot from Massive (Polygon) for a single ticker."""
-    if not MASSIVE_API_KEY or "YOUR_MASSIVE_API_KEY" in MASSIVE_API_KEY:
-        return None, "Massive API key is not configured. Edit app.py and set MASSIVE_API_KEY."
-
-    url = f"{MASSIVE_BASE_URL}/v2/snapshot/locale/us/markets/stocks/tickers/{ticker}"
-    params = {"apiKey": MASSIVE_API_KEY}
-    try:
-        resp = requests.get(url, params=params, timeout=5)
-        data = resp.json()
-        if resp.status_code != 200:
-            return None, f"Massive error: HTTP {resp.status_code} {data.get('error', '')}"
-        ticker_data = data.get("ticker")
-        if not ticker_data:
-            return None, "No ticker data returned from Massive."
-        last_trade = ticker_data.get("lastTrade") or {}
-        prev_day = ticker_data.get("prevDay") or {}
-        todays_change_pct = ticker_data.get("todaysChangePerc")
-        price = last_trade.get("p") or prev_day.get("c")
-        return {
-            "last_price": price,
-            "todays_change_pct": todays_change_pct,
-            "raw": ticker_data,
-        }, None
-    except Exception as e:
-        return None, f"Massive request failed: {e}"
-
-
-def fetch_news_for_ticker(ticker: str, page_size: int = 5):
-    """Get latest headlines for a ticker from NewsAPI."""
-    if not NEWSAPI_KEY or "YOUR_NEWSAPI_KEY" in NEWSAPI_KEY:
-        return [], "NewsAPI key is not configured. Edit app.py and set NEWSAPI_KEY."
-
-    params = {
-        "q": ticker,
-        "language": "en",
-        "sortBy": "publishedAt",
-        "pageSize": page_size,
-        "apiKey": NEWSAPI_KEY,
-    }
-    try:
-        resp = requests.get(NEWSAPI_URL, params=params, timeout=5)
-        data = resp.json()
-        if resp.status_code != 200:
-            return [], f"NewsAPI error: HTTP {resp.status_code} {data.get('message', '')}"
-        return data.get("articles", []), None
-    except Exception as e:
-        return [], f"NewsAPI request failed: {e}"
-
-# ---------------------------
-# Local helpers: sentiment, model, portfolio
-# ---------------------------
-
-def simple_news_sentiment_from_text(text: str):
-    """Tiny keyword-based sentiment using headline/title text."""
-    text = (text or "").lower()
-    if not text.strip():
-        return 0.0, "Neutral"
-
-    pos_words = [
-        "beat", "beats", "growth", "rises", "surge", "record",
-        "strong", "bullish", "upgrade", "optimistic", "profit",
-        "profits", "gain", "gains", "improve", "improves",
-    ]
-    neg_words = [
-        "miss", "misses", "loss", "losses", "falls", "fall",
-        "plunge", "plunges", "downgrade", "weak", "bearish",
-        "lawsuit", "fraud", "scandal", "warning", "cuts", "cut",
-        "recession", "slowdown",
-    ]
-
-    pos = 0
-    neg = 0
-    for w in pos_words:
-        pos += text.count(w)
-    for w in neg_words:
-        neg += text.count(w)
-
-    total = max(1, pos + neg)
-    raw = (pos - neg) / total  # roughly -1..+1
-    score = max(-5.0, min(5.0, raw * 5.0))
-
-    if score >= 1.5:
-        label = "Positive"
-    elif score <= -1.5:
-        label = "Negative"
-    else:
-        label = "Neutral"
-
-    return score, label
-
-
-def compute_sector_impacts_from_factors(factor_shocks: dict):
-    """Multi-factor model: factors drive sector impact scores."""
+    - Primary sector gets sensitivity 1.0
+    - All other sectors get spillover sensitivity 0.4
+    - Impact Score normalized to +/-5 and labeled.
+    """
     rows = []
-    for sec in SECTORS:
-        weights = SECTOR_FACTOR_WEIGHTS.get(sec, {})
-        raw = 0.0
-        for f in FACTORS:
-            raw += weights.get(f, 0.0) * factor_shocks.get(f, 0.0)
-        rows.append({"Sector": sec, "Raw Score": raw})
+    for sec in sectors:
+        if sec == primary_sector:
+            sensitivity = 1.0
+        else:
+            sensitivity = 0.4  # simple spillover assumption
+
+        raw_score = sensitivity * stock_move
+        rows.append(
+            {
+                "Sector": sec,
+                "Sensitivity (to stock move)": sensitivity,
+                "Raw Score": raw_score,
+            }
+        )
 
     df = pd.DataFrame(rows)
+
     max_abs = df["Raw Score"].abs().max()
     if max_abs and max_abs > 0:
         df["Impact Score"] = df["Raw Score"] / max_abs * 5
@@ -260,17 +103,23 @@ def compute_sector_impacts_from_factors(factor_shocks: dict):
         return "Strong Positive"
 
     df["Impact Label"] = df["Impact Score"].apply(label)
+
     return df[["Sector", "Impact Score", "Impact Label"]]
 
 
 def compute_portfolio_exposure(portfolio_df: pd.DataFrame, sector_scores: pd.DataFrame):
-    """Portfolio stress test under current sector scenario."""
+    """
+    Expects portfolio_df with columns: Sector, Allocation (as percent or fraction)
+    Returns weighted exposure and breakdown.
+    """
     df = portfolio_df.copy()
     if "Allocation" not in df.columns:
         raise ValueError("Uploaded portfolio must contain 'Allocation' column")
-
     total = df["Allocation"].sum()
-    df["Weight"] = df["Allocation"] / total if total else 0.0
+    if total == 0:
+        df["Weight"] = 0.0
+    else:
+        df["Weight"] = df["Allocation"] / total
 
     merged = df.merge(sector_scores, on="Sector", how="left")
     merged["Impact Score"].fillna(0.0, inplace=True)
@@ -281,50 +130,23 @@ def compute_portfolio_exposure(portfolio_df: pd.DataFrame, sector_scores: pd.Dat
     ]
 
 
-def compute_portfolio_factor_exposures(portfolio_df: pd.DataFrame):
-    """Hedge-fund style: factor exposures from sector weights."""
-    df = portfolio_df.copy()
-    if "Allocation" not in df.columns:
-        raise ValueError("Uploaded portfolio must contain 'Allocation' column")
-
-    total = df["Allocation"].sum()
-    if total == 0:
-        return pd.DataFrame({"Factor": FACTORS, "Exposure": [0.0] * len(FACTORS)})
-
-    df["Weight"] = df["Allocation"] / total
-
-    exposures = {f: 0.0 for f in FACTORS}
-    for _, row in df.iterrows():
-        sec = row["Sector"]
-        w = row["Weight"]
-        sec_weights = SECTOR_FACTOR_WEIGHTS.get(sec, {})
-        for f in FACTORS:
-            exposures[f] += w * sec_weights.get(f, 0.0)
-
-    rows = [{"Factor": f, "Exposure": round(exposures[f], 3)} for f in FACTORS]
-    return pd.DataFrame(rows)
-
-# ---------------------------
-# AI + PDF helpers (Groq)
-# ---------------------------
-
 def call_ai_research(history, user_text: str, level: str = "Professional") -> str:
+    """Call Groq Llama as a corporate research analyst (concepts, narratives)."""
     if client is None:
-        return "AI Research Analyst not configured. Set GROQ_API_KEY in app.py if you want AI text."
-
+        return (
+            "AI Research Analyst not configured. Set GROQ_API_KEY in environment or Streamlit Secrets."
+        )
     level_line = {
-        "Professional": "Write as a hedge-fund style stock analyst, concise and structured.",
-        "Executive": "Write a polished PM/IC summary (~3 paragraphs) with key risks and drivers.",
-        "Technical": "Write a detailed risk memo with factor language, scenarios, and caveats.",
+        "Professional": "Write as a corporate research analyst for internal use, concise and structured.",
+        "Executive": "Write a polished executive summary for C-suite consumption, ~3 paragraphs.",
+        "Technical": "Write a detailed technical memo with supporting reasoning and caveats.",
     }.get(level, "Write in clear professional language.")
 
     system_prompt = (
-        "You are an internal AI research analyst for a hedge fund. "
-        "You focus on single-stock analysis, factor drivers, sector linkages and positioning. "
-        "You may reference market moves, sector trends, earnings, and news sentiment, "
-        "but you MUST NOT give explicit buy/sell/hold recommendations, price targets, "
-        "or personalized investment advice. "
-        "Frame everything as scenario analysis, risk notes, and talking points. "
+        "You are an internal AI research analyst for an institutional client. "
+        "Your task: convert scenario inputs and sector outputs into concise internal research narratives, "
+        "scenario summaries, risk notes and suggested topics for internal follow-up. "
+        "You MUST NOT provide direct buy/sell recommendations, price targets or personalized investment advice. "
         + level_line
     )
 
@@ -337,7 +159,7 @@ def call_ai_research(history, user_text: str, level: str = "Professional") -> st
         completion = client.chat.completions.create(
             model=MODEL_NAME,
             messages=messages,
-            max_tokens=900,
+            max_tokens=700,
             temperature=0.2,
         )
         return completion.choices[0].message.content.strip()
@@ -362,6 +184,7 @@ def create_pdf_report(
     pdf.cell(0, 8, f"Scenario: {scenario_name}", ln=True)
     pdf.ln(4)
 
+    # Scenario inputs
     pdf.set_font("Helvetica", "B", 12)
     pdf.cell(0, 8, "Scenario Inputs:", ln=True)
     pdf.set_font("Helvetica", "", 11)
@@ -369,6 +192,7 @@ def create_pdf_report(
         pdf.cell(0, 7, f"{k}: {v}", ln=True)
     pdf.ln(4)
 
+    # Sector impacts
     pdf.set_font("Helvetica", "B", 12)
     pdf.cell(0, 8, "Sector Impacts:", ln=True)
     pdf.set_font("Helvetica", "", 11)
@@ -381,6 +205,7 @@ def create_pdf_report(
         )
     pdf.ln(4)
 
+    # Portfolio
     if portfolio_table is not None and not portfolio_table.empty:
         pdf.set_font("Helvetica", "B", 12)
         pdf.cell(0, 8, "Portfolio Exposure (sample):", ln=True)
@@ -395,6 +220,7 @@ def create_pdf_report(
             )
         pdf.ln(4)
 
+    # AI summary
     if ai_summary:
         pdf.set_font("Helvetica", "B", 12)
         pdf.cell(0, 8, "AI Research Summary:", ln=True)
@@ -404,10 +230,10 @@ def create_pdf_report(
 
     return pdf.output(dest="S").encode("latin-1")
 
-# ---------------------------
-# UI header
-# ---------------------------
 
+# ---------------------------
+# UI Rendering
+# ---------------------------
 def render_header():
     st.markdown(
         f"""
@@ -417,10 +243,8 @@ def render_header():
               KM
             </div>
             <div>
-              <div style="font-size:18px;font-weight:800;color:{COLORS['text']};">Katta MacroSuite — Stock Hedge Fund Lab</div>
-              <div style="font-size:12px;color:#475569;">
-                Massive snapshot • Factor shocks • Portfolio risk • News + AI research • PDF export
-              </div>
+              <div style="font-size:18px;font-weight:800;color:{COLORS['text']};">Katta MacroSuite — Markets Intelligence</div>
+              <div style="font-size:12px;color:#475569;">Single-stock impact • Sector sensitivity • Portfolio exposure • Internal research automation</div>
             </div>
           </div>
         </div>
@@ -428,238 +252,90 @@ def render_header():
         unsafe_allow_html=True,
     )
 
+
 render_header()
-
-# ---------------------------
-# Session state defaults
-# ---------------------------
-
-defaults = {
-    "sector_df": None,
-    "scenario_name": None,
-    "scenario_meta": {},
-    "portfolio_df": None,
-    "ai_history": [],
-    "factor_shocks": {f: 0.0 for f in FACTORS},
-    "news_sentiment_score": 0.0,
-    "news_sentiment_label": "Neutral",
-}
-for k, v in defaults.items():
-    if k not in st.session_state:
-        st.session_state[k] = v
-
-# ---------------------------
-# Sidebar
-# ---------------------------
 
 with st.sidebar:
     st.title("Katta MacroSuite")
-
     ai_level = st.radio(
-        "AI output style:",
-        ["Professional", "Executive", "Technical"],
-        index=0,
+        "AI output style:", ["Professional", "Executive", "Technical"], index=0
     )
-
     st.markdown("---")
-
     if client is None:
-        st.info(
-            "AI tab will still show up, but you need a valid GROQ_API_KEY in app.py if you want AI text."
+        st.warning(
+            "Groq API not configured — AI Research Analyst disabled until GROQ_API_KEY is set."
         )
-
     st.markdown(
-        "Upload a CSV portfolio (columns: `Sector`, `Allocation`). "
-        "Allocation can be percent or units."
+        "Upload a CSV portfolio (columns: Sector, Allocation). Allocation can be percent or units."
+    )
+    st.markdown("---")
+    st.caption(
+        "This platform is a decision-support tool. It does NOT provide buy/sell advice."
     )
 
-    st.markdown("---")
-    st.caption("Decision-support only. Not investment advice.")
+# Init scenario library
+if "scenario_library" not in st.session_state:
+    st.session_state["scenario_library"] = []
 
-# ---------------------------
-# Tabs
-# ---------------------------
-
-tab_live, tab_portfolio, tab_ai, tab_reports = st.tabs(
+# Main tabs
+tab_explorer, tab_portfolio, tab_whatif, tab_scenarios, tab_ai, tab_reports = st.tabs(
     [
-        "Live Stock Dashboard",
+        "Stock Impact Explorer",
         "Portfolio Analyzer",
+        "What-if Builder",
+        "Scenario Library",
         "AI Research Analyst",
         "Generate Report",
     ]
 )
 
-# ---------- Live Stock Dashboard ----------
-with tab_live:
-    st.subheader("Live Stock Dashboard — Massive + NewsAPI + Factor Model")
+# ---------- Stock Impact Explorer (First Page) ----------
+with tab_explorer:
+    st.subheader("Single-Stock Impact Explorer — Stock → Sector Sensitivity")
 
-    col_input1, col_input2 = st.columns([2, 1])
-    with col_input1:
-        ticker = st.text_input("Stock ticker", "AAPL").upper().strip()
-    with col_input2:
-        primary_sector = st.selectbox(
-            "Primary sector for this stock",
-            SECTORS,
-            index=0,
-            help="Which sector best represents this stock?",
-        )
-
-    # Live snapshot from Massive
-    st.markdown("### Live Snapshot (from Massive, if key is set)")
-
-    snapshot_data, snapshot_error = (None, None)
-    if ticker:
-        snapshot_data, snapshot_error = fetch_massive_snapshot(ticker)
-
-    col_price1, col_price2, col_price3 = st.columns(3)
-    if snapshot_error:
-        st.warning(snapshot_error)
-
-    if snapshot_data:
-        last_price = snapshot_data.get("last_price") or 0.0
-        todays_change_pct = snapshot_data.get("todays_change_pct") or 0.0
-        with col_price1:
-            st.metric("Last Price (Massive)", f"${last_price:,.2f}")
-        with col_price2:
-            st.metric("Today's Change %", f"{todays_change_pct:+.2f}%")
-        with col_price3:
-            if todays_change_pct:
-                prev_price = last_price / (1 + todays_change_pct / 100.0)
-            else:
-                prev_price = last_price
-            st.metric("Prev Close (implied)", f"${prev_price:,.2f}")
-    else:
-        with col_price1:
-            last_price = st.number_input(
-                "Last Price (manual)", min_value=0.0, value=180.0
-            )
-        with col_price2:
-            todays_change_pct = st.slider(
-                "Today's % move (manual)",
-                -20.0,
-                20.0,
-                0.0,
-                step=0.5,
-            )
-        with col_price3:
-            new_price = last_price * (1 + todays_change_pct / 100.0)
-            st.metric(
-                "Implied End-of-day Price",
-                f"${new_price:,.2f}",
-                f"{todays_change_pct:+.1f}%",
-            )
-
-    # News + sentiment
-    st.markdown("### Latest News Headlines (NewsAPI)")
-
-    articles, news_error = fetch_news_for_ticker(ticker) if ticker else ([], None)
-    news_text_blob = ""
-    if news_error:
-        st.warning(news_error)
-    elif articles:
-        for art in articles:
-            title = art.get("title", "No title")
-            source = (art.get("source") or {}).get("name", "")
-            url = art.get("url", "")
-            desc = art.get("description", "") or ""
-            news_text_blob += f"{title}. {desc}\n"
-            st.markdown(
-                f"**{title}**  \n<small>{source}</small>",
-                unsafe_allow_html=True,
-            )
-            if url:
-                st.markdown(f"[Read more]({url})")
-            st.markdown("---")
-
-    sentiment_score, sentiment_label = simple_news_sentiment_from_text(news_text_blob)
-    st.session_state["news_sentiment_score"] = sentiment_score
-    st.session_state["news_sentiment_label"] = sentiment_label
-    st.markdown(
-        f"**News sentiment (from headlines, toy):** {sentiment_label}  (score {sentiment_score:.1f}/5)"
+    stock_name = st.text_input("Stock name / ticker", "AAPL")
+    primary_sector = st.selectbox(
+        "Primary sector for this stock",
+        sectors,
+        index=0,
+        help="Which sector best represents this stock?",
+    )
+    stock_move = st.slider(
+        "Assumed stock price move (%)",
+        -20,
+        20,
+        0,
+        help="Negative = stock down, Positive = stock up",
     )
 
-    # Multi-factor scenario (stock-focused)
-    st.markdown("### Multi-factor Stock Scenario")
-    factor_shocks = st.session_state["factor_shocks"].copy()
-
-    cF1, cF2 = st.columns(2)
-    with cF1:
-        factor_shocks["Market Move"] = st.slider(
-            "Market Move (index)  [-5 bearish, +5 bullish]",
-            -5.0,
-            5.0,
-            factor_shocks.get("Market Move", 0.0),
-            step=0.5,
-        )
-        factor_shocks["Earnings Surprise"] = st.slider(
-            "Earnings Surprise [-5 big miss, +5 big beat]",
-            -5.0,
-            5.0,
-            factor_shocks.get("Earnings Surprise", 0.0),
-            step=0.5,
-        )
-    with cF2:
-        factor_shocks["Sector Move"] = st.slider(
-            f"{primary_sector} Sector Trend [-5 weak, +5 strong]",
-            -5.0,
-            5.0,
-            factor_shocks.get("Sector Move", 0.0),
-            step=0.5,
-        )
-        factor_shocks["News Sentiment"] = st.slider(
-            "News Sentiment factor",
-            -5.0,
-            5.0,
-            float(round(sentiment_score, 1)),
-            step=0.5,
-            help=f"Starts from headline sentiment ({sentiment_label}), but you can override.",
-        )
-
-    st.session_state["factor_shocks"] = factor_shocks
-
-    # Turn factor shocks into a toy "implied stock move"
-    weights_for_move = {
-        "Market Move": 0.4,
-        "Sector Move": 0.3,
-        "Earnings Surprise": 0.2,
-        "News Sentiment": 0.1,
-    }
-    effective_stock_move = (
-        factor_shocks["Market Move"] * weights_for_move["Market Move"]
-        + factor_shocks["Sector Move"] * weights_for_move["Sector Move"]
-        + factor_shocks["Earnings Surprise"] * weights_for_move["Earnings Surprise"]
-        + factor_shocks["News Sentiment"] * weights_for_move["News Sentiment"]
-    ) * 2.0
-
-    st.markdown(
-        f"**Implied stock move from factors (toy): ~{effective_stock_move:+.1f}%**"
+    st.caption(
+        "This page uses a simple, illustrative sensitivity model: the chosen stock has the "
+        "strongest impact on its primary sector, and a smaller spillover impact on other sectors."
     )
 
-    sector_df = compute_sector_impacts_from_factors(factor_shocks)
-    scenario_name = f"{ticker} factor scenario"
+    sector_df = compute_stock_sector_impacts(stock_move, primary_sector)
+
+    scenario_name = f"{stock_name} move {stock_move:+.1f}%"
     scenario_meta = {
-        "Stock": ticker,
+        "Stock": stock_name,
+        "Move (%)": stock_move,
         "Primary Sector": primary_sector,
-        "Implied Move (%)": round(effective_stock_move, 1),
-        "Factors": factor_shocks,
-        "Headline Sentiment": f"{sentiment_label} ({sentiment_score:.1f}/5)",
     }
-
     st.session_state["sector_df"] = sector_df
     st.session_state["scenario_name"] = scenario_name
     st.session_state["scenario_meta"] = scenario_meta
 
-    # Sector visuals
-    c1, c2 = st.columns([2, 3])
-    with c1:
-        st.markdown("#### Sector Impact Table")
+    col1, col2 = st.columns([2, 3])
+    with col1:
+        st.markdown("#### Sector Impact from this Stock Move")
         st.dataframe(
             sector_df.style.format({"Impact Score": "{:+.2f}"}),
             use_container_width=True,
             hide_index=True,
         )
-    with c2:
-        st.markdown("#### Sector Impact Bars")
+
+    with col2:
+        st.markdown("#### Visual Overview")
         chart = (
             alt.Chart(sector_df)
             .mark_bar()
@@ -672,7 +348,7 @@ with tab_live:
         )
         st.altair_chart(chart, use_container_width=True)
 
-    st.markdown("#### Quick Take — Sectors Under This Stock Scenario")
+    st.markdown("#### Quick take")
     sorted_df = sector_df.sort_values("Impact Score", ascending=False)
     winners = sorted_df.head(2)
     losers = sorted_df.tail(2)
@@ -683,41 +359,61 @@ with tab_live:
         f"{row.Sector} ({row['Impact Label']})" for _, row in losers.iterrows()
     )
     st.markdown(
-        f"- **Sectors most helped:** {winner_text}  \n"
-        f"- **Sectors facing headwinds:** {loser_text}"
+        f"- **Most positively exposed to this stock move:** {winner_text}  \n"
+        f"- **Most negatively exposed / least helped:** {loser_text}"
     )
-    st.caption("Toy factor model for learning only, not a live risk engine.")
+    st.caption(
+        "This is a simplified, educational sensitivity model — not a real-world risk model or investment advice."
+    )
+
+    # Save scenario to library
+    if st.button("Save this scenario to library"):
+        st.session_state["scenario_library"].append(
+            {
+                "name": scenario_name,
+                "meta": scenario_meta.copy(),
+                "sector_df": sector_df.copy(),
+            }
+        )
+        st.success("Scenario saved to library for later comparison.")
 
 # ---------- Portfolio Analyzer ----------
 with tab_portfolio:
-    st.subheader("Portfolio Analyzer — Factor Exposures & Scenario Stress Test")
-
+    st.subheader("Portfolio / Revenue Exposure Analyzer")
     st.markdown("Upload a CSV with columns: `Sector`, `Allocation` (percent or units).")
-    uploaded = st.file_uploader("Upload portfolio CSV", type=["csv"])
 
-    if uploaded is not None:
+    uploaded_portfolio = st.file_uploader(
+        "Upload portfolio CSV", type=["csv"], key="upload_portfolio_base"
+    )
+    sample = st.button("Download sample CSV")
+    if sample:
+        sample_df = pd.DataFrame({"Sector": sectors, "Allocation": [0] * len(sectors)})
+        csv_bytes = sample_df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "Download sample CSV", csv_bytes, file_name="portfolio_sample.csv"
+        )
+
+    portfolio_df = None
+    if uploaded_portfolio is not None:
         try:
-            portfolio_df = pd.read_csv(uploaded)
-            st.session_state["portfolio_df"] = portfolio_df
+            portfolio_df = pd.read_csv(uploaded_portfolio)
             st.write("Uploaded portfolio preview:")
             st.dataframe(portfolio_df.head(20), use_container_width=True)
         except Exception as e:
             st.error(f"Error reading CSV: {e}")
 
-    if st.button("Run portfolio analysis (current scenario)"):
+    if st.button("Analyze current stock scenario exposure"):
         sector_df_current = st.session_state.get("sector_df")
-        portfolio_df_current = st.session_state.get("portfolio_df")
-
         if sector_df_current is None:
             st.error(
-                "No scenario found. Build a scenario on the 'Live Stock Dashboard' tab first."
+                "No scenario found. Please configure a stock move on the 'Stock Impact Explorer' tab first."
             )
-        elif portfolio_df_current is None:
+        elif portfolio_df is None:
             st.error("Please upload a portfolio CSV first.")
         else:
             try:
                 score, breakdown = compute_portfolio_exposure(
-                    portfolio_df_current, sector_df_current
+                    portfolio_df, sector_df_current
                 )
                 st.metric("Portfolio Weighted Impact Score", f"{score:.3f}")
                 st.markdown("Breakdown:")
@@ -725,58 +421,154 @@ with tab_portfolio:
 
                 if score > 1.5:
                     st.success(
-                        "Portfolio tilt: Mild to strong positive sensitivity in this scenario."
+                        "Portfolio tilt: Mild to strong positive sensitivity to the current stock scenario."
                     )
                 elif score < -1.5:
                     st.warning(
-                        "Portfolio tilt: Mild to strong negative sensitivity in this scenario."
+                        "Portfolio tilt: Mild to strong negative sensitivity to the current stock scenario."
                     )
                 else:
-                    st.info("Portfolio tilt: Largely neutral under this scenario.")
+                    st.info(
+                        "Portfolio tilt: Largely neutral under the chosen stock scenario."
+                    )
             except Exception as e:
                 st.error(f"Analysis error: {e}")
 
-    st.markdown("---")
-    if st.button("Show hedge-fund style factor exposures"):
-        portfolio_df_current = st.session_state.get("portfolio_df")
-        if portfolio_df_current is None:
-            st.error("Upload a portfolio CSV first.")
-        else:
+# ---------- What-if Builder (no paid data, just math) ----------
+with tab_whatif:
+    st.subheader("What-if Portfolio Builder (No Extra Data)")
+
+    st.markdown(
+        "Upload a portfolio, then use sliders to see how **multiplying each sector's allocation** "
+        "changes your exposure to the current stock scenario."
+    )
+
+    sector_df_current = st.session_state.get("sector_df")
+    if sector_df_current is None:
+        st.warning(
+            "No scenario found. Configure a stock scenario first on the 'Stock Impact Explorer' tab."
+        )
+    else:
+        uploaded_whatif = st.file_uploader(
+            "Upload portfolio CSV for what-if (Sector, Allocation)",
+            type=["csv"],
+            key="upload_portfolio_whatif",
+        )
+
+        if uploaded_whatif is not None:
             try:
-                factor_exposures = compute_portfolio_factor_exposures(
-                    portfolio_df_current
-                )
-                st.markdown("### Portfolio Factor Exposures (toy)")
-                st.dataframe(
-                    factor_exposures, use_container_width=True, hide_index=True
+                base_df = pd.read_csv(uploaded_whatif)
+            except Exception as e:
+                base_df = None
+                st.error(f"Error reading CSV: {e}")
+
+            if base_df is not None:
+                st.write("Base portfolio:")
+                st.dataframe(base_df, use_container_width=True)
+
+                st.markdown("#### Adjust sector weights (multiplier 0.0x to 2.0x)")
+                multipliers = {}
+                for _, row in base_df.iterrows():
+                    sec = row["Sector"]
+                    m = st.slider(
+                        f"{sec} multiplier",
+                        0.0,
+                        2.0,
+                        1.0,
+                        0.05,
+                        help="1.0 = keep allocation same, 2.0 = double, 0.5 = cut in half",
+                    )
+                    multipliers[sec] = m
+
+                new_df = base_df.copy()
+                new_df["Allocation"] = new_df.apply(
+                    lambda r: r["Allocation"] * multipliers.get(r["Sector"], 1.0),
+                    axis=1,
                 )
 
-                chart_f = (
-                    alt.Chart(factor_exposures)
-                    .mark_bar()
-                    .encode(
-                        x=alt.X("Factor:N", sort=None),
-                        y=alt.Y("Exposure:Q"),
-                        tooltip=["Factor", "Exposure"],
+                st.markdown("#### What-if portfolio (after multipliers)")
+                st.dataframe(new_df, use_container_width=True)
+
+                # Compute original vs new exposure
+                try:
+                    base_score, base_break = compute_portfolio_exposure(
+                        base_df, sector_df_current
                     )
-                    .properties(height=300)
-                )
-                st.altair_chart(chart_f, use_container_width=True)
-            except Exception as e:
-                st.error(f"Exposure calc error: {e}")
+                    new_score, new_break = compute_portfolio_exposure(
+                        new_df, sector_df_current
+                    )
+                    delta = new_score - base_score
+
+                    col_a, col_b = st.columns(2)
+                    with col_a:
+                        st.metric(
+                            "Original Portfolio Impact Score",
+                            f"{base_score:.3f}",
+                        )
+                    with col_b:
+                        st.metric(
+                            "What-if Portfolio Impact Score",
+                            f"{new_score:.3f}",
+                            delta=f"{delta:+.3f}",
+                        )
+
+                    st.markdown("#### What-if breakdown:")
+                    st.dataframe(new_break, use_container_width=True)
+                except Exception as e:
+                    st.error(f"Error computing what-if exposure: {e}")
+        else:
+            st.info("Upload a portfolio CSV to start building what-if scenarios.")
+
+# ---------- Scenario Library & Comparison ----------
+with tab_scenarios:
+    st.subheader("Scenario Library & Comparison")
+
+    lib = st.session_state.get("scenario_library", [])
+    if not lib:
+        st.info("No saved scenarios yet. Save one from the 'Stock Impact Explorer' tab.")
+    else:
+        st.markdown("#### Saved scenarios")
+        for i, sc in enumerate(lib):
+            with st.expander(f"{i+1}. {sc['name']}"):
+                st.write("Inputs:", sc["meta"])
+                df_sc = sc["sector_df"]
+                st.dataframe(df_sc, use_container_width=True)
+
+        st.markdown("#### Compare two scenarios by sector")
+        names = [sc["name"] for sc in lib]
+        col1, col2 = st.columns(2)
+        with col1:
+            sel1 = st.selectbox("Scenario A", names, index=0)
+        with col2:
+            sel2 = st.selectbox("Scenario B", names, index=min(1, len(names) - 1))
+
+        if sel1 and sel2 and sel1 != sel2:
+            sc1 = next(sc for sc in lib if sc["name"] == sel1)
+            sc2 = next(sc for sc in lib if sc["name"] == sel2)
+            df1 = sc1["sector_df"].rename(
+                columns={"Impact Score": "Impact A", "Impact Label": "Label A"}
+            )
+            df2 = sc2["sector_df"].rename(
+                columns={"Impact Score": "Impact B", "Impact Label": "Label B"}
+            )
+            merged = df1.merge(df2, on="Sector", how="outer")
+            st.dataframe(merged, use_container_width=True)
+        else:
+            st.caption("Select two different scenarios to compare.")
 
 # ---------- AI Research Analyst ----------
 with tab_ai:
-    st.subheader("AI Research Analyst — Stock-Focused Narratives (Groq)")
-
+    st.subheader("AI Research Analyst — Generate internal narratives")
     st.markdown(
-        "Write internal hedge-fund style notes, risk summaries, and scenario explanations. "
-        "Requires a valid GROQ_API_KEY set in app.py."
+        "Draft internal memos, scenario summaries, and risk notes. (AI must be configured.)"
     )
 
+    if "ai_history" not in st.session_state:
+        st.session_state.ai_history = []
+
     user_q = st.text_area(
-        "Ask the AI Research Analyst (e.g., 'Write a PM summary of this scenario for the IC call')",
-        height=140,
+        "Ask the AI Research Analyst (e.g., 'Write an executive summary of this stock scenario')",
+        height=120,
     )
     ai_style = st.selectbox(
         "AI style", ["Professional", "Executive", "Technical"], index=0
@@ -784,51 +576,46 @@ with tab_ai:
 
     if st.button("Run AI"):
         if client is None:
-            st.error(
-                "AI not configured. Edit app.py and set GROQ_API_KEY to use this."
-            )
+            st.error("AI not configured. Set GROQ_API_KEY.")
         else:
             sector_df_current = st.session_state.get("sector_df")
             scenario_name = st.session_state.get("scenario_name", "Current scenario")
             scenario_meta = st.session_state.get("scenario_meta", {})
 
-            context = f"Scenario: {scenario_name}\nScenario inputs: {scenario_meta}\n"
-            if sector_df_current is not None:
-                context += "Top sector impacts:\n"
+            if sector_df_current is None:
+                st.error(
+                    "No scenario found. Please configure a stock move on the 'Stock Impact Explorer' tab first."
+                )
+            else:
+                context = (
+                    f"Scenario: {scenario_name}\nScenario inputs: {scenario_meta}\nTop sector impacts:\n"
+                )
                 top_n = sector_df_current.sort_values(
                     "Impact Score", ascending=False
-                ).head(4)
+                ).head(3)
                 for _, r in top_n.iterrows():
                     context += (
                         f"- {r['Sector']}: {r['Impact Score']} ({r['Impact Label']})\n"
                     )
-
-            full_prompt = context + "\nUser request:\n" + user_q
-            st.session_state["ai_history"].append(
-                {"role": "user", "content": full_prompt}
-            )
-
-            with st.spinner("Generating AI summary..."):
-                out = call_ai_research(
-                    st.session_state["ai_history"], full_prompt, ai_style
+                prompt = context + "\nUser request:\n" + user_q
+                st.session_state.ai_history.append({"role": "user", "content": prompt})
+                with st.spinner("Generating AI summary..."):
+                    out = call_ai_research(
+                        st.session_state.ai_history, prompt, ai_style
+                    )
+                st.markdown("**AI output**")
+                st.markdown(out)
+                st.session_state.ai_history.append(
+                    {"role": "assistant", "content": out}
                 )
-
-            st.markdown("**AI output**")
-            st.markdown(out)
-            st.session_state["ai_history"].append(
-                {"role": "assistant", "content": out}
-            )
-            st.session_state["ai_history"] = st.session_state["ai_history"][-20:]
+                st.session_state.ai_history = st.session_state.ai_history[-20:]
 
 # ---------- Report Generation ----------
 with tab_reports:
-    st.subheader("Generate Downloadable Scenario Report (PDF)")
-
-    report_title = st.text_input(
-        "Report title", "Stock Scenario & Portfolio Insight"
-    )
+    st.subheader("Generate Downloadable Report")
+    report_title = st.text_input("Report title", "Stock Scenario & Portfolio Insight")
     include_portfolio = st.checkbox(
-        "Include uploaded portfolio exposure (if available)", value=True
+        "Include uploaded portfolio exposure", value=True
     )
     ai_summary_for_report = st.text_area(
         "Optional: paste AI summary to include in report", height=120
@@ -838,22 +625,23 @@ with tab_reports:
         sector_df_current = st.session_state.get("sector_df")
         scenario_name = st.session_state.get("scenario_name", "Current scenario")
         scenario_meta = st.session_state.get("scenario_meta", {})
-        portfolio_df_current = st.session_state.get("portfolio_df")
 
         if sector_df_current is None:
             st.error(
-                "No scenario found. Build a scenario on the 'Live Stock Dashboard' tab first."
+                "No scenario found. Please configure a stock move on the 'Stock Impact Explorer' tab first."
             )
         else:
+            # re-use base portfolio if user uploaded in Portfolio Analyzer
+            uploaded_portfolio = st.session_state.get("upload_portfolio_base")
             portfolio_table = None
-            if include_portfolio and portfolio_df_current is not None:
-                try:
-                    _, portfolio_table = compute_portfolio_exposure(
-                        portfolio_df_current, sector_df_current
-                    )
-                except Exception as e:
-                    st.error(f"Cannot include portfolio: {e}")
-                    portfolio_table = None
+
+            # we can't re-read from widget directly, so just skip including portfolio here
+            # unless you want to re-upload – this keeps it simple and free.
+            if include_portfolio:
+                st.info(
+                    "To include portfolio details in the PDF, you can also run this app "
+                    "server-side where the portfolio dataframe is kept in session."
+                )
 
             pdf_bytes = create_pdf_report(
                 report_title,
@@ -866,11 +654,12 @@ with tab_reports:
             st.download_button(
                 "Download PDF report",
                 data=pdf_bytes,
-                file_name="katta_stock_report.pdf",
+                file_name="katta_report.pdf",
                 mime="application/pdf",
             )
 
+# Footer / notes
 st.markdown("---")
 st.caption(
-    "Katta MacroSuite — hedge-fund style stock factor lab. For education and internal research only. Not investment advice."
+    "Katta MacroSuite — decision-support analytics. Not investment advice. For internal corporate use."
 )
