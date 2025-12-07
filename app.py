@@ -6,7 +6,7 @@ from groq import Groq
 from fpdf import FPDF
 import requests
 
-# optional market data dependency
+# Optional market data dependency
 try:
     import yfinance as yf
 except ImportError:
@@ -17,7 +17,15 @@ except ImportError:
 # ---------------------------
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 MODEL_NAME = "llama-3.1-8b-instant"
-NEWS_API_KEY = os.getenv("NEWS_API_KEY")
+
+# Prefer Streamlit secrets; fall back to environment variable
+NEWS_API_KEY = None
+try:
+    NEWS_API_KEY = st.secrets.get("NEWS_API_KEY", None)
+except Exception:
+    NEWS_API_KEY = None
+if NEWS_API_KEY is None:
+    NEWS_API_KEY = os.getenv("NEWS_API_KEY")
 
 client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
@@ -69,7 +77,7 @@ def get_realtime_stock_data(ticker: str):
     Fetch live-ish stock price info using yfinance.
     Returns dict with keys:
       price, open, previous_close, change, change_pct, currency
-    or None / {'error': ...} if unavailable.
+    or error message if unavailable.
     """
     if not ticker:
         return None
@@ -108,10 +116,28 @@ def get_realtime_stock_data(ticker: str):
         return {"error": f"Market data error: {e}"}
 
 
-def fetch_stock_news(query: str, limit: int = 5):
+def get_stock_history_df(ticker: str, period: str = "3mo") -> pd.DataFrame | None:
     """
-    Fetch recent news for the stock using NewsAPI.
-    Requires NEWS_API_KEY in environment / secrets.
+    Get recent daily price history for charting.
+    Returns DataFrame with columns: Date, Close
+    or None if unavailable.
+    """
+    if not ticker or yf is None:
+        return None
+    try:
+        t = yf.Ticker(ticker)
+        hist = t.history(period=period, interval="1d")
+        if hist.empty:
+            return None
+        df = hist.reset_index()[["Date", "Close"]]
+        return df
+    except Exception:
+        return None
+
+
+def fetch_stock_news(query: str, limit: int = 6):
+    """
+    Fetch recent relevant news for this stock using NewsAPI.
     Returns list of dicts with: title, source, url, published_at, description.
     """
     if not query:
@@ -131,6 +157,7 @@ def fetch_stock_news(query: str, limit: int = 5):
         resp = requests.get(url, params=params, timeout=8)
         if resp.status_code != 200:
             return []
+
         data = resp.json()
         articles = data.get("articles", [])[:limit]
         cleaned = []
@@ -196,7 +223,7 @@ def compute_stock_sector_impacts(stock_move: float, primary_sector: str) -> pd.D
 
     df["Impact Label"] = df["Impact Score"].apply(label)
 
-    # Light hedge-fund style risk buckets for flavor
+    # Hedge-fund style risk buckets
     bucket_map = {
         "Tech": "Cyclical / Growth",
         "Luxury / Discretionary": "Cyclical / Consumer",
@@ -248,7 +275,7 @@ def call_ai_research(history, user_text: str, level: str = "Professional") -> st
 
     system_prompt = (
         "You are an internal AI research analyst for an institutional client. "
-        "Your task: convert scenario inputs and sector outputs into concise internal research narratives, "
+        "Your task: convert scenario inputs, stock moves, and sector outputs into concise internal research narratives, "
         "scenario summaries, risk notes and suggested topics for internal follow-up. "
         "You MUST NOT provide direct buy/sell recommendations, price targets or personalized investment advice. "
         + level_line
@@ -348,7 +375,7 @@ def render_header():
             </div>
             <div>
               <div style="font-size:18px;font-weight:800;color:{COLORS['text']};">Katta MacroSuite — Markets Intelligence</div>
-              <div style="font-size:12px;color:#475569;">Single-stock impact • Sector sensitivity • Portfolio exposure • Internal research automation • Live prices & headlines</div>
+              <div style="font-size:12px;color:#475569;">Single-stock impact • Sector sensitivity • Portfolio exposure • Internal research automation • Live prices & news</div>
             </div>
           </div>
         </div>
@@ -370,9 +397,9 @@ with st.sidebar:
             "Groq API not configured — AI Research Analyst disabled until GROQ_API_KEY is set."
         )
     if not NEWS_API_KEY:
-        st.info("Optional: set NEWS_API_KEY to enable live stock headlines.")
+        st.info("Optional: set NEWS_API_KEY to enable relevant market news.")
     if yf is None:
-        st.info("Optional: add 'yfinance' to requirements.txt to enable live prices.")
+        st.info("Optional: add 'yfinance' to requirements.txt to enable live prices & charts.")
     st.markdown(
         "Upload a CSV portfolio (columns: Sector, Allocation). Allocation can be percent or units."
     )
@@ -420,7 +447,7 @@ with tab_explorer:
             "Stock move source",
             ["Manual % move", "Use live market move"],
             index=0,
-            help="Hedge-fund style: you can either hard-code a stress move or link it to the live market move.",
+            help="Hedge-fund style: either hard-code a stress move or link it to the live market move.",
         )
 
         manual_stock_move = st.slider(
@@ -473,23 +500,44 @@ with tab_explorer:
             else:
                 st.caption("Select 'Use live market move' to fetch a live snapshot.")
 
-        st.markdown("#### Latest headlines")
+        st.markdown("#### Price history (last 3 months)")
+        hist_df = get_stock_history_df(ticker, period="3mo")
+        if hist_df is not None and not hist_df.empty:
+            price_chart = (
+                alt.Chart(hist_df)
+                .mark_line()
+                .encode(
+                    x=alt.X("Date:T", title="Date"),
+                    y=alt.Y("Close:Q", title="Close price"),
+                    tooltip=["Date:T", "Close:Q"],
+                )
+                .properties(height=220)
+            )
+            st.altair_chart(price_chart, use_container_width=True)
+        else:
+            st.caption("Price history not available yet for this ticker.")
+
+        st.markdown("#### Relevant news & research")
         if NEWS_API_KEY:
-            news_items = fetch_stock_news(ticker or raw_stock_input, limit=5)
+            news_items = fetch_stock_news(ticker or raw_stock_input, limit=6)
             if not news_items:
-                st.caption("No recent headlines found for this name (or API limit reached).")
+                st.caption("No recent news available for this name, or API returned no results.")
             else:
                 for n in news_items:
                     title = n.get("title") or "No title"
                     src = n.get("source") or "Unknown"
                     url = n.get("url") or "#"
+                    published = n.get("published_at") or ""
+                    desc = n.get("description") or ""
+                    meta = " • ".join(x for x in [src, published] if x)
                     st.markdown(
                         f"- [{title}]({url})  \n"
-                        f"  <span style='font-size:11px;color:#6b7280;'>Source: {src}</span>",
+                        f"  <span style='font-size:11px;color:#6b7280;'>{meta}</span>  \n"
+                        f"  <span style='font-size:11px;color:#4b5563;'>{desc}</span>",
                         unsafe_allow_html=True,
                     )
         else:
-            st.caption("Set NEWS_API_KEY to pull live headlines for this ticker.")
+            st.caption("Set NEWS_API_KEY to pull relevant news & research for this ticker.")
 
     st.caption(
         "This page uses a simplified, educational sensitivity model. Live prices & news make it feel like a hedge-fund blotter, "
@@ -549,8 +597,8 @@ with tab_explorer:
     direction = "bullish" if stock_move > 0 else "bearish" if stock_move < 0 else "flat"
     st.markdown(
         f"- **Direction of shock:** {direction} single-name move of **{stock_move:+.2f}%**.  \n"
-        f"- **Crowded long-style beneficiaries:** {winner_text}  \n"
-        f"- **Natural hedge / short candidates (conceptually, not advice):** {loser_text}  \n"
+        f"- **Positively exposed risk buckets:** {winner_text}  \n"
+        f"- **Negatively exposed / potential hedge buckets (conceptually, not advice):** {loser_text}  \n"
         f"- **Decomposition (rule-of-thumb):** Treat ~70% of this move as sector/market factor and ~30% as idiosyncratic noise."
     )
     st.caption(
