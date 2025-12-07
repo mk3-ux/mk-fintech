@@ -52,57 +52,29 @@ sectors = [
     "Banks",
 ]
 
+DEFAULT_SECTOR_STOCKS = {
+    "Tech": ["AAPL", "MSFT", "NVDA"],
+    "Real Estate": ["SPG", "PSA"],
+    "Luxury / Discretionary": ["TSLA", "NKE", "SBUX"],
+    "Bonds": ["TLT", "IEF"],
+    "Energy": ["XOM", "CVX"],
+    "Consumer Staples": ["KO", "WMT", "COST"],
+    "Banks": ["JPM", "BAC", "WFC"],
+}
+
 # ---------------------------
 # Helpers
 # ---------------------------
-def compute_stock_sector_impacts(stock_move: float, primary_sector: str) -> pd.DataFrame:
-    """
-    Simple stock→sector sensitivity model.
-
-    - Primary sector gets sensitivity 1.0
-    - All other sectors get spillover sensitivity 0.4
-    - Impact Score normalized to +/-5 and labeled.
-    """
-    rows = []
-    for sec in sectors:
-        if sec == primary_sector:
-            sensitivity = 1.0
-        else:
-            sensitivity = 0.4  # simple spillover assumption
-
-        raw_score = sensitivity * stock_move
-        rows.append(
-            {
-                "Sector": sec,
-                "Sensitivity": sensitivity,
-                "Raw Score": raw_score,
-            }
-        )
-
-    df = pd.DataFrame(rows)
-
-    max_abs = df["Raw Score"].abs().max()
-    if max_abs and max_abs > 0:
-        df["Impact Score"] = df["Raw Score"] / max_abs * 5
-    else:
-        df["Impact Score"] = 0.0
-
-    df["Impact Score"] = df["Impact Score"].round(2)
-
-    def label(score):
-        if score <= -3.5:
-            return "Strong Negative"
-        if score <= -1.5:
-            return "Mild Negative"
-        if score < 1.5:
-            return "Neutral"
-        if score < 3.5:
-            return "Mild Positive"
-        return "Strong Positive"
-
-    df["Impact Label"] = df["Impact Score"].apply(label)
-
-    return df[["Sector", "Impact Score", "Impact Label"]]
+def label_from_score(score: float) -> str:
+    if score <= -3.5:
+        return "Strong Negative"
+    if score <= -1.5:
+        return "Mild Negative"
+    if score < 1.5:
+        return "Neutral"
+    if score < 3.5:
+        return "Mild Positive"
+    return "Strong Positive"
 
 
 def compute_portfolio_exposure(portfolio_df: pd.DataFrame, sector_scores: pd.DataFrame):
@@ -274,7 +246,7 @@ def render_header():
             </div>
             <div>
               <div style="font-size:18px;font-weight:800;color:{COLORS['text']};">Katta MacroSuite — Markets Intelligence</div>
-              <div style="font-size:12px;color:#475569;">Single-stock impact • Sector sensitivity • Portfolio analytics • Scenario library • Internal research automation</div>
+              <div style="font-size:12px;color:#475569;">Sector scenarios • Stock impact simulation • Portfolio analytics • Scenario library • Internal research automation</div>
             </div>
           </div>
         </div>
@@ -331,13 +303,18 @@ if "ai_history" not in st.session_state:
     st.session_state["ai_history"] = []
 if "scenario_library" not in st.session_state:
     st.session_state["scenario_library"] = []
+if "sector_stocks" not in st.session_state:
+    # deep copy defaults
+    st.session_state["sector_stocks"] = {
+        k: v[:] for k, v in DEFAULT_SECTOR_STOCKS.items()
+    }
 
 # ---------------------------
 # Main tabs
 # ---------------------------
 tab_explorer, tab_portfolio, tab_whatif, tab_scenarios, tab_ai, tab_reports = st.tabs(
     [
-        "Stock Impact Explorer",
+        "Sector & Stock Simulator",
         "Portfolio Analyzer",
         "What-If Builder",
         "Scenario Library",
@@ -346,67 +323,73 @@ tab_explorer, tab_portfolio, tab_whatif, tab_scenarios, tab_ai, tab_reports = st
     ]
 )
 
-# ---------- Stock Impact Explorer ----------
+# ---------- Sector & Stock Simulator (NEW first feature) ----------
 with tab_explorer:
-    st.subheader("Single-Stock Impact Explorer — Stock → Sector Sensitivity")
+    st.subheader("Sector Scenario & Stock Impact Simulator")
 
-    stock_name = st.text_input("Stock name / ticker", "AAPL")
-    primary_sector = st.selectbox(
-        "Primary sector for this stock",
-        sectors,
-        index=0,
-        help="Which sector best represents this stock?",
-    )
-    stock_move = st.slider(
-        "Assumed stock price move (%)",
-        -20,
-        20,
-        0,
-        help="Negative = stock down, Positive = stock up",
+    st.markdown(
+        "Step 1: Define how each sector is currently impacted (–5 = strong negative, +5 = strong positive)."
     )
 
-    st.caption(
-        "This page uses a simple, illustrative sensitivity model: the chosen stock has the "
-        "strongest impact on its primary sector, and a smaller spillover impact on other sectors."
-    )
+    sector_scores = {}
+    c1, c2 = st.columns(2)
+    for i, sector in enumerate(sectors):
+        col = c1 if i % 2 == 0 else c2
+        with col:
+            val = st.slider(
+                f"{sector}",
+                -5.0,
+                5.0,
+                0.0,
+                0.5,
+            )
+        sector_scores[sector] = float(val)
 
-    sector_df = compute_stock_sector_impacts(stock_move, primary_sector)
+    # Build sector_df from sliders
+    sector_rows = []
+    for s in sectors:
+        score = sector_scores[s]
+        sector_rows.append(
+            {
+                "Sector": s,
+                "Impact Score": round(score, 2),
+                "Impact Label": label_from_score(score),
+            }
+        )
+    sector_df = pd.DataFrame(sector_rows)
 
-    scenario_name = f"{stock_name} move {stock_move:+.1f}%"
-    scenario_meta = {
-        "Stock": stock_name,
-        "Move (%)": stock_move,
-        "Primary Sector": primary_sector,
-    }
+    # Scenario metadata
+    scenario_name = "Custom sector scenario"
+    scenario_meta = {s: sector_scores[s] for s in sectors}
 
-    # Save in session for other tabs
     st.session_state["sector_df"] = sector_df
     st.session_state["scenario_name"] = scenario_name
     st.session_state["scenario_meta"] = scenario_meta
 
     col1, col2 = st.columns([2, 3])
     with col1:
-        st.markdown("#### Sector Impact from this Stock Move")
+        st.markdown("#### Sector Impact Overview")
         st.dataframe(
             sector_df.style.format({"Impact Score": "{:+.2f}"}),
             use_container_width=True,
             hide_index=True,
         )
 
-        # Simple scenario shock level (fintech-ish insight)
-        severity = abs(stock_move)
-        if severity >= 15:
-            risk_label = "High shock"
-        elif severity >= 8:
-            risk_label = "Moderate shock"
-        elif severity >= 3:
-            risk_label = "Low shock"
+        avg_severity = float(
+            sum(abs(v) for v in sector_scores.values()) / max(len(sector_scores), 1)
+        )
+        if avg_severity >= 3.5:
+            shock_label = "High regime shift"
+        elif avg_severity >= 2.0:
+            shock_label = "Moderate dislocation"
+        elif avg_severity >= 1.0:
+            shock_label = "Low but meaningful move"
         else:
-            risk_label = "Very small move"
-        st.markdown(f"**Scenario shock level:** {risk_label}")
+            shock_label = "Very mild environment"
+        st.markdown(f"**Scenario severity (avg |score|):** {avg_severity:.2f} — {shock_label}")
 
     with col2:
-        st.markdown("#### Visual Overview")
+        st.markdown("#### Sector Impact Chart")
         chart = (
             alt.Chart(sector_df)
             .mark_bar()
@@ -415,38 +398,111 @@ with tab_explorer:
                 y=alt.Y("Impact Score:Q"),
                 tooltip=["Sector", "Impact Score", "Impact Label"],
             )
-            .properties(height=360)
+            .properties(height=320)
         )
         st.altair_chart(chart, use_container_width=True)
 
-    st.markdown("#### Quick take")
-    sorted_df = sector_df.sort_values("Impact Score", ascending=False)
-    winners = sorted_df.head(2)
-    losers = sorted_df.tail(2)
-    winner_text = ", ".join(
-        f"{row.Sector} ({row['Impact Label']})" for _, row in winners.iterrows()
-    )
-    loser_text = ", ".join(
-        f"{row.Sector} ({row['Impact Label']})" for _, row in losers.iterrows()
-    )
-    st.markdown(
-        f"- **Most positively exposed to this stock move:** {winner_text}  \n"
-        f"- **Most negatively exposed / least helped:** {loser_text}"
-    )
+    st.markdown("---")
+    st.markdown("### Step 2: Map sectors to stocks (editable)")
+
     st.caption(
-        "This is a simplified, educational sensitivity model — not a real-world risk model or investment advice."
+        "Edit which stocks belong to each sector. Use comma-separated tickers. "
+        "The model will simulate which stocks are most affected based on the sector scores above."
     )
 
-    # Save scenario to library
-    if st.button("Save this scenario to library"):
+    sector_stocks = st.session_state["sector_stocks"]
+    for sector in sectors:
+        default_text = ", ".join(sector_stocks.get(sector, []))
+        text_val = st.text_input(
+            f"{sector} stocks",
+            default_text,
+            key=f"stocks_{sector}",
+        )
+        tickers = [t.strip().upper() for t in text_val.split(",") if t.strip()]
+        sector_stocks[sector] = tickers
+
+    st.session_state["sector_stocks"] = sector_stocks
+
+    # Build stock-level impact table
+    stock_rows = []
+    for sector in sectors:
+        score = sector_scores[sector]
+        label = label_from_score(score)
+        for ticker in sector_stocks.get(sector, []):
+            stock_rows.append(
+                {
+                    "Sector": sector,
+                    "Stock": ticker,
+                    "Impact Score": round(score, 2),
+                    "Impact Label": label,
+                }
+            )
+
+    stock_df = pd.DataFrame(stock_rows) if stock_rows else pd.DataFrame(
+        columns=["Sector", "Stock", "Impact Score", "Impact Label"]
+    )
+
+    st.markdown("### Step 3: Simulated stock-level impact")
+
+    col3, col4 = st.columns([2, 3])
+    with col3:
+        st.markdown("#### Stock Impact Table")
+        st.dataframe(stock_df, use_container_width=True)
+
+    with col4:
+        if not stock_df.empty:
+            st.markdown("#### Stock Impact Chart")
+            stock_chart = (
+                alt.Chart(stock_df)
+                .mark_bar()
+                .encode(
+                    x=alt.X("Stock:N", sort=None),
+                    y=alt.Y("Impact Score:Q"),
+                    color="Sector:N",
+                    tooltip=["Stock", "Sector", "Impact Score", "Impact Label"],
+                )
+                .properties(height=320)
+            )
+            st.altair_chart(stock_chart, use_container_width=True)
+        else:
+            st.info("No stocks defined yet. Add tickers above to see stock-level impact.")
+
+    st.markdown("#### Quick take")
+    if not stock_df.empty:
+        sorted_stocks = stock_df.sort_values("Impact Score", ascending=False)
+        top_winners = sorted_stocks.head(3)
+        top_losers = sorted_stocks.tail(3)
+        winners_text = ", ".join(
+            f"{row.Stock} ({row.Sector}, {row['Impact Label']})"
+            for _, row in top_winners.iterrows()
+        )
+        losers_text = ", ".join(
+            f"{row.Stock} ({row.Sector}, {row['Impact Label']})"
+            for _, row in top_losers.iterrows()
+        )
+        st.markdown(
+            f"- **Stocks with the most positive simulated impact:** {winners_text or 'N/A'}  \n"
+            f"- **Stocks with the most negative simulated impact:** {losers_text or 'N/A'}"
+        )
+    else:
+        st.caption("Define some stocks above to see which names are most impacted.")
+
+    st.caption(
+        "This is a simplified scenario engine that maps sector-level stress/benefit to stocks. "
+        "It is for internal / educational use, not investment advice."
+    )
+
+    # Save scenario (sectors + stocks) to library
+    if st.button("Save this sector & stock scenario to library"):
         st.session_state["scenario_library"].append(
             {
                 "name": scenario_name,
                 "meta": scenario_meta.copy(),
                 "sector_df": sector_df.copy(),
+                "stock_df": stock_df.copy(),
             }
         )
-        st.success("Scenario saved to library for later comparison.")
+        st.success("Scenario saved to library for later comparison and analysis.")
 
 # ---------- Portfolio Analyzer ----------
 with tab_portfolio:
@@ -463,13 +519,13 @@ with tab_portfolio:
             st.write("Uploaded portfolio preview:")
             st.dataframe(portfolio_df.head(20), use_container_width=True)
 
-            # Diversification metric (fintech-y feature)
+            # Diversification metric
             diversification, div_label = compute_diversification_metrics(portfolio_df)
             st.markdown(
                 f"**Diversification score (1−HHI):** {diversification:.3f} — {div_label}"
             )
 
-            # Simple allocation chart
+            # Allocation chart
             alloc_chart = (
                 alt.Chart(portfolio_df)
                 .mark_bar()
@@ -485,13 +541,13 @@ with tab_portfolio:
         except Exception as e:
             st.error(f"Error reading CSV: {e}")
 
-    if st.button("Analyze current stock scenario exposure"):
+    if st.button("Analyze current sector scenario exposure"):
         sector_df_current = st.session_state.get("sector_df")
         portfolio_df_current = st.session_state.get("portfolio_df")
 
         if sector_df_current is None:
             st.error(
-                "No scenario found. Please configure a stock move on the 'Stock Impact Explorer' tab first."
+                "No scenario found. Please configure sector scores on the 'Sector & Stock Simulator' tab first."
             )
         elif portfolio_df_current is None:
             st.error("Please upload a portfolio CSV first.")
@@ -506,15 +562,15 @@ with tab_portfolio:
 
                 if score > 1.5:
                     st.success(
-                        "Portfolio tilt: Mild to strong positive sensitivity to the current stock scenario."
+                        "Portfolio tilt: Mild to strong positive sensitivity to the current sector scenario."
                     )
                 elif score < -1.5:
                     st.warning(
-                        "Portfolio tilt: Mild to strong negative sensitivity to the current stock scenario."
+                        "Portfolio tilt: Mild to strong negative sensitivity to the current sector scenario."
                     )
                 else:
                     st.info(
-                        "Portfolio tilt: Largely neutral under the chosen stock scenario."
+                        "Portfolio tilt: Largely neutral under the chosen sector scenario."
                     )
             except Exception as e:
                 st.error(f"Analysis error: {e}")
@@ -532,7 +588,7 @@ with tab_whatif:
 
     if sector_df_current is None:
         st.warning(
-            "No scenario found. Configure a stock scenario first on the 'Stock Impact Explorer' tab."
+            "No scenario found. Configure sector scores first on the 'Sector & Stock Simulator' tab."
         )
     elif portfolio_df_current is None:
         st.warning(
@@ -590,13 +646,18 @@ with tab_scenarios:
 
     lib = st.session_state.get("scenario_library", [])
     if not lib:
-        st.info("No saved scenarios yet. Save one from the 'Stock Impact Explorer' tab.")
+        st.info("No saved scenarios yet. Save one from the 'Sector & Stock Simulator' tab.")
     else:
         st.markdown("#### Saved scenarios")
         for i, sc in enumerate(lib):
             with st.expander(f"{i+1}. {sc['name']}"):
                 st.write("Inputs:", sc["meta"])
+                st.markdown("**Sector view:**")
                 st.dataframe(sc["sector_df"], use_container_width=True)
+                stock_df_sc = sc.get("stock_df")
+                if stock_df_sc is not None and not stock_df_sc.empty:
+                    st.markdown("**Stock view:**")
+                    st.dataframe(stock_df_sc, use_container_width=True)
 
         st.markdown("#### Compare two scenarios by sector")
         names = [sc["name"] for sc in lib]
@@ -630,7 +691,7 @@ with tab_ai:
     )
 
     user_q = st.text_area(
-        "Ask the AI Research Analyst (e.g., 'Write an executive summary of this stock scenario')",
+        "Ask the AI Research Analyst (e.g., 'Write an executive summary of this sector scenario and the most impacted stocks')",
         height=120,
     )
     ai_style_choice = st.selectbox(
@@ -645,7 +706,7 @@ with tab_ai:
 
         if sector_df_current is None:
             st.error(
-                "No scenario found. Please configure a stock move on the 'Stock Impact Explorer' tab first."
+                "No scenario found. Please configure a sector scenario on the 'Sector & Stock Simulator' tab first."
             )
         else:
             diversification_txt = ""
@@ -684,7 +745,7 @@ with tab_ai:
 with tab_reports:
     st.subheader("Generate Downloadable Report")
 
-    report_title = st.text_input("Report title", "Stock Scenario & Portfolio Insight")
+    report_title = st.text_input("Report title", "Sector Scenario & Portfolio Insight")
     include_portfolio = st.checkbox(
         "Include uploaded portfolio exposure (if available)", value=True
     )
@@ -700,7 +761,7 @@ with tab_reports:
 
         if sector_df_current is None:
             st.error(
-                "No scenario found. Please configure a stock move on the 'Stock Impact Explorer' tab first."
+                "No scenario found. Please configure a sector scenario on the 'Sector & Stock Simulator' tab first."
             )
         else:
             portfolio_table = None
