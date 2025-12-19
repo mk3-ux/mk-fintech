@@ -649,51 +649,17 @@ def portfolio_template_csv() -> bytes:
 # ============================================================
 # 11) ANALYTICS
 # ============================================================
-
-def sector_impact(move: float, primary: str) -> pd.DataFrame:
-    rows = []
-    for s in SECTORS:
-        impact = float(move) if s == primary else float(move) * 0.35
-        rows.append({"Sector": s, "Score": impact})
-    df = pd.DataFrame(rows)
-    mx = float(df["Score"].abs().max())
-    df["Score"] = 0.0 if mx == 0 else (df["Score"] / mx * 5.0).round(2)
-    return df
-
-def diversification_and_hhi(port: pd.DataFrame) -> Tuple[float, float]:
-    w = port["Allocation"] / port["Allocation"].sum()
-    hhi = float(np.sum(w ** 2))
-    div = float(1.0 - hhi)
-    return round(div, 2), round(hhi, 2)
-
-def portfolio_sensitivity(port: pd.DataFrame, scenario_df: pd.DataFrame) -> float:
-    merged = port.merge(scenario_df, on="Sector", how="left")
-    merged["Score"] = merged["Score"].fillna(0.0)
-    w = merged["Allocation"] / merged["Allocation"].sum()
-    return float((w * merged["Score"]).sum())
-
-def sector_bar_chart(df: pd.DataFrame) -> alt.Chart:
-    return alt.Chart(df).mark_bar().encode(
-        x=alt.X("Sector:N", sort=None),
-        y=alt.Y("Score:Q"),
-        tooltip=["Sector", "Score"],
-    ).properties(height=280)
-
 # ============================================================
-# LIVE STOCK DATA
+# LIVE MARKETS UTILITIES
 # ============================================================
 
-DEFAULT_TICKERS = [
-    "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA",
-    "TSLA", "META", "SPY", "QQQ"
-]
-
+@st.cache_data(ttl=60)
 def fetch_live_prices(tickers: List[str]) -> pd.DataFrame:
     rows = []
     for t in tickers:
         try:
-            ticker = yf.Ticker(t)
-            info = ticker.fast_info
+            tk = yf.Ticker(t)
+            info = tk.fast_info
             price = info.get("lastPrice")
             prev = info.get("previousClose")
 
@@ -711,27 +677,20 @@ def fetch_live_prices(tickers: List[str]) -> pd.DataFrame:
             })
         except Exception:
             continue
-
     return pd.DataFrame(rows)
 
-def intraday_chart(ticker: str) -> Optional[alt.Chart]:
-    try:
-        df = yf.download(ticker, period="1d", interval="5m", progress=False)
-        if df.empty:
-            return None
-        df = df.reset_index()
-        return (
-            alt.Chart(df)
-            .mark_line()
-            .encode(
-                x="Datetime:T",
-                y="Close:Q",
-                tooltip=["Datetime:T", "Close:Q"]
-            )
-            .properties(height=250)
-        )
-    except Exception:
-        return None
+@st.cache_data(ttl=300)
+def intraday_data(ticker: str) -> pd.DataFrame:
+    return yf.download(ticker, period="1d", interval="5m", progress=False)
+
+def market_status() -> str:
+    eastern = pytz.timezone("US/Eastern")
+    now = dt.datetime.now(eastern)
+    if now.weekday() >= 5:
+        return "🔴 Market Closed"
+    if dt.time(9, 30) <= now.time() <= dt.time(16, 0):
+        return "🟢 Market Open"
+    return "🔴 Market Closed"
 
 
 # ============================================================
