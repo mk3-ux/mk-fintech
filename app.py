@@ -653,44 +653,6 @@ def portfolio_template_csv() -> bytes:
 # LIVE MARKETS UTILITIES
 # ============================================================
 
-@st.cache_data(ttl=60)
-def fetch_live_prices(tickers: List[str]) -> pd.DataFrame:
-    rows = []
-    for t in tickers:
-        try:
-            tk = yf.Ticker(t)
-            info = tk.fast_info
-            price = info.get("lastPrice")
-            prev = info.get("previousClose")
-
-            if price is None or prev is None:
-                continue
-
-            change = price - prev
-            pct = (change / prev) * 100 if prev else 0
-
-            rows.append({
-                "Ticker": t,
-                "Price": round(price, 2),
-                "Change": round(change, 2),
-                "% Change": round(pct, 2),
-            })
-        except Exception:
-            continue
-    return pd.DataFrame(rows)
-
-@st.cache_data(ttl=300)
-def intraday_data(ticker: str) -> pd.DataFrame:
-    return yf.download(ticker, period="1d", interval="5m", progress=False)
-
-def market_status() -> str:
-    eastern = pytz.timezone("US/Eastern")
-    now = dt.datetime.now(eastern)
-    if now.weekday() >= 5:
-        return "🔴 Market Closed"
-    if dt.time(9, 30) <= now.time() <= dt.time(16, 0):
-        return "🟢 Market Open"
-    return "🔴 Market Closed"
 
 
 # ============================================================
