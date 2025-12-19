@@ -4,16 +4,15 @@ import pandas as pd
 import altair as alt
 from groq import Groq
 from fpdf import FPDF
-import requests
 
 try:
     import yfinance as yf
 except ImportError:
     yf = None
 
-# =========================
+# ============================================================
 # CONFIG
-# =========================
+# ============================================================
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 MODEL_NAME = "llama-3.1-8b-instant"
 client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
@@ -24,15 +23,22 @@ st.set_page_config(
     page_icon="📈",
 )
 
-# =========================
+# ============================================================
+# SUBSCRIPTION STATE
+# ============================================================
+if "subscription" not in st.session_state:
+    st.session_state.subscription = "Free"
+
+if "ai_uses" not in st.session_state:
+    st.session_state.ai_uses = 0
+
+# ============================================================
 # UI STYLING
-# =========================
+# ============================================================
 COLORS = {
     "bg": "#F8FAFC",
     "text": "#0F172A",
-    "card": "#FFFFFF",
     "accent": "#2563EB",
-    "subtle": "#E5E7EB",
 }
 
 st.markdown(
@@ -45,9 +51,9 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# =========================
+# ============================================================
 # DATA MODELS
-# =========================
+# ============================================================
 sectors = [
     "Technology",
     "Financials",
@@ -59,10 +65,38 @@ sectors = [
     "Fixed Income",
 ]
 
-# =========================
+# ============================================================
+# SIDEBAR (SUBSCRIPTION CONTROL)
+# ============================================================
+with st.sidebar:
+    st.markdown("## Account Type")
+    tier = st.radio(
+        "Subscription Tier",
+        ["Free", "Pro"],
+        index=0,
+        help="Demo toggle — Pro unlocks advanced advisor tools",
+    )
+    st.session_state.subscription = tier
+
+    if tier == "Free":
+        st.info("Free plan: core tools with usage limits.")
+        st.markdown("🔒 **Upgrade to Pro for:**")
+        st.markdown(
+            "- Client risk profiles\n"
+            "- Unlimited AI insights\n"
+            "- Advanced reports\n"
+            "- Scenario comparison"
+        )
+    else:
+        st.success("Pro plan active — all features unlocked")
+
+    st.markdown("---")
+    st.caption("Decision-support only. Not investment advice.")
+
+# ============================================================
 # HELPERS
-# =========================
-def get_realtime_stock_data(ticker):
+# ============================================================
+def get_live_stock(ticker):
     if yf is None:
         return None
     try:
@@ -78,16 +112,16 @@ def get_realtime_stock_data(ticker):
         return None
 
 
-def compute_sector_sensitivity(stock_move, primary_sector):
+def compute_sector_sensitivity(move, primary_sector):
     rows = []
     for s in sectors:
         sensitivity = 1.0 if s == primary_sector else 0.35
-        score = sensitivity * stock_move
-        rows.append({"Sector": s, "Impact Score": score})
+        score = sensitivity * move
+        rows.append({"Sector": s, "Impact": score})
 
     df = pd.DataFrame(rows)
-    max_abs = df["Impact Score"].abs().max()
-    df["Impact Score"] = (df["Impact Score"] / max_abs * 5).round(2)
+    max_abs = df["Impact"].abs().max()
+    df["Impact Score"] = (df["Impact"] / max_abs * 5).round(2)
 
     def label(x):
         if x <= -3:
@@ -101,31 +135,62 @@ def compute_sector_sensitivity(stock_move, primary_sector):
         return "Higher upside sensitivity"
 
     df["Interpretation"] = df["Impact Score"].apply(label)
-    return df
+    return df[["Sector", "Impact Score", "Interpretation"]]
 
 
 def compute_portfolio_exposure(portfolio, sector_df):
+    portfolio = portfolio.copy()
     portfolio["Weight"] = portfolio["Allocation"] / portfolio["Allocation"].sum()
     merged = portfolio.merge(sector_df, on="Sector", how="left")
     merged["Weighted Impact"] = merged["Weight"] * merged["Impact Score"]
     return merged["Weighted Impact"].sum(), merged
 
 
-def call_ai_wealth(history, user_text, style):
+def get_client_profile():
+    if st.session_state.subscription != "Pro":
+        return None
+
+    st.markdown("### Client Profile (Pro)")
+    risk = st.selectbox(
+        "Risk Tolerance",
+        ["Conservative", "Moderate", "Growth", "Aggressive"],
+    )
+    horizon = st.selectbox(
+        "Time Horizon",
+        ["< 3 years", "3–7 years", "7–15 years", "15+ years"],
+    )
+    objective = st.selectbox(
+        "Primary Objective",
+        ["Capital Preservation", "Income", "Balanced", "Growth"],
+    )
+
+    return {
+        "Risk Tolerance": risk,
+        "Time Horizon": horizon,
+        "Objective": objective,
+    }
+
+
+def call_ai_wealth(prompt):
     if client is None:
         return "AI not configured."
 
+    if st.session_state.subscription == "Free":
+        if st.session_state.ai_uses >= 2:
+            return "🔒 Free tier limit reached. Upgrade to Pro for unlimited AI insights."
+        st.session_state.ai_uses += 1
+
     system = (
         "You are a senior wealth management research analyst. "
-        "Write advisor-ready insights focused on diversification, risk, and long-term planning. "
-        "Do NOT give buy/sell advice or price targets."
+        "Write advisor-ready insights focused on diversification, long-term planning, "
+        "and client suitability. Do NOT give buy/sell advice."
     )
 
     completion = client.chat.completions.create(
         model=MODEL_NAME,
         messages=[
             {"role": "system", "content": system},
-            {"role": "user", "content": user_text},
+            {"role": "user", "content": prompt},
         ],
         temperature=0.3,
         max_tokens=600,
@@ -133,7 +198,7 @@ def call_ai_wealth(history, user_text, style):
     return completion.choices[0].message.content.strip()
 
 
-def create_pdf(title, scenario, sector_df, ai_summary=""):
+def create_pdf(title, scenario, sector_df, ai_summary="", client_profile=None):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Helvetica", "B", 16)
@@ -142,6 +207,14 @@ def create_pdf(title, scenario, sector_df, ai_summary=""):
     pdf.set_font("Helvetica", "", 11)
     pdf.cell(0, 8, f"Scenario: {scenario}", ln=True)
     pdf.ln(4)
+
+    if client_profile:
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.cell(0, 8, "Client Profile", ln=True)
+        pdf.set_font("Helvetica", "", 10)
+        for k, v in client_profile.items():
+            pdf.cell(0, 6, f"{k}: {v}", ln=True)
+        pdf.ln(3)
 
     pdf.set_font("Helvetica", "B", 12)
     pdf.cell(0, 8, "Sector Sensitivity Overview", ln=True)
@@ -164,22 +237,22 @@ def create_pdf(title, scenario, sector_df, ai_summary=""):
 
     return pdf.output(dest="S").encode("latin-1")
 
-# =========================
+# ============================================================
 # HEADER
-# =========================
+# ============================================================
 st.markdown(
     """
     <div style="background:#EFF6FF;padding:16px;border-radius:12px;">
         <h2>Katta Wealth Insights</h2>
-        <p>Client-focused portfolio analysis • Risk-aware scenarios • Advisor-ready insights</p>
+        <p>Client-focused portfolio analysis • Risk-aware scenarios • Advisor-ready reporting</p>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
-# =========================
+# ============================================================
 # TABS
-# =========================
+# ============================================================
 tab_market, tab_portfolio, tab_whatif, tab_ai, tab_report = st.tabs(
     [
         "Market Scenario Explorer",
@@ -190,9 +263,9 @@ tab_market, tab_portfolio, tab_whatif, tab_ai, tab_report = st.tabs(
     ]
 )
 
-# =========================
+# ============================================================
 # MARKET SCENARIO
-# =========================
+# ============================================================
 with tab_market:
     st.subheader("Market Scenario Explorer")
 
@@ -200,7 +273,7 @@ with tab_market:
     primary_sector = st.selectbox("Primary economic exposure", sectors)
     move = st.slider("Assumed price move (%)", -20, 20, 0)
 
-    live = get_realtime_stock_data(ticker)
+    live = get_live_stock(ticker)
     if live:
         st.metric(
             f"{ticker} current price",
@@ -226,12 +299,15 @@ with tab_market:
     )
     st.altair_chart(chart, use_container_width=True)
 
-# =========================
+# ============================================================
 # PORTFOLIO ANALYZER
-# =========================
+# ============================================================
 with tab_portfolio:
     st.subheader("Portfolio Exposure Analysis")
+
     uploaded = st.file_uploader("Upload portfolio CSV (Sector, Allocation)", type="csv")
+
+    client_profile = get_client_profile()
 
     if uploaded:
         portfolio = pd.read_csv(uploaded)
@@ -244,20 +320,19 @@ with tab_portfolio:
         st.metric("Overall Portfolio Sensitivity Score", f"{score:.2f}")
         st.dataframe(breakdown, use_container_width=True)
 
-# =========================
-# WHAT-IF
-# =========================
+# ============================================================
+# WHAT-IF BUILDER
+# ============================================================
 with tab_whatif:
     st.subheader("What-If Allocation Builder")
+
     if uploaded:
         multipliers = {}
         for s in portfolio["Sector"]:
             multipliers[s] = st.slider(f"{s} adjustment", 0.5, 1.5, 1.0)
 
         adjusted = portfolio.copy()
-        adjusted["Allocation"] = adjusted.apply(
-            lambda r: r["Allocation"] * multipliers[r["Sector"]], axis=1
-        )
+        adjusted["Allocation"] *= adjusted["Sector"].map(multipliers)
 
         new_score, _ = compute_portfolio_exposure(
             adjusted, st.session_state["sector_df"]
@@ -269,26 +344,36 @@ with tab_whatif:
             delta=f"{new_score - score:+.2f}",
         )
 
-# =========================
+# ============================================================
 # AI ASSISTANT
-# =========================
+# ============================================================
 with tab_ai:
     st.subheader("AI Wealth Research Assistant")
+
     prompt = st.text_area(
-        "Ask for advisor-ready insights (e.g. client explanation, risk summary)"
+        "Ask for advisor-ready insights (e.g. explain this scenario to a client)"
     )
 
-    if st.button("Generate"):
-        context = f"Scenario: {st.session_state['scenario']}\n{st.session_state['sector_df']}"
-        output = call_ai_wealth([], context + "\n" + prompt, "Professional")
+    if st.button("Generate AI Insight"):
+        context = (
+            f"Scenario: {st.session_state['scenario']}\n"
+            f"Sector impacts:\n{st.session_state['sector_df']}"
+        )
+        output = call_ai_wealth(context + "\n\n" + prompt)
         st.markdown(output)
         st.session_state["ai_output"] = output
 
-# =========================
+        if st.session_state.subscription == "Free":
+            st.caption(
+                f"Free tier AI usage: {st.session_state.ai_uses}/2"
+            )
+
+# ============================================================
 # REPORT
-# =========================
+# ============================================================
 with tab_report:
     st.subheader("Generate Client-Ready PDF")
+
     title = st.text_input("Report title", "Client Portfolio Scenario Review")
 
     if st.button("Create PDF"):
@@ -297,6 +382,7 @@ with tab_report:
             st.session_state["scenario"],
             st.session_state["sector_df"],
             st.session_state.get("ai_output", ""),
+            client_profile,
         )
         st.download_button(
             "Download PDF",
@@ -305,4 +391,4 @@ with tab_report:
             mime="application/pdf",
         )
 
-st.caption("Decision-support only. Not investment advice.")
+st.caption("For educational and decision-support purposes only. Not investment advice.")
