@@ -30,7 +30,6 @@ import pandas as pd
 import altair as alt
 import streamlit as st
 from fpdf import FPDF
-import yfinance as yf
 
 # Optional dependencies (safe fallbacks)
 try:
@@ -97,10 +96,6 @@ def ss_init() -> None:
     # demo billing mirror (used only when DB not available)
     st.session_state.setdefault("billing_status", "unpaid")
     st.session_state.setdefault("last_payment_event", None)
-        # OTP login
-    st.session_state.setdefault("otp_email", None)
-    st.session_state.setdefault("otp_hash", None)
-    st.session_state.setdefault("otp_expiry", None)
 
 ss_init()
 
@@ -140,38 +135,6 @@ def safe_json(obj: Any) -> str:
 # ============================================================
 # 3) OPTIONAL COOKIES (GRACEFUL FALLBACK)
 # ============================================================
-import random
-
-OTP_TTL_SECONDS = 300  # 5 minutes
-
-def generate_otp() -> str:
-    return f"{random.randint(100000, 999999)}"
-
-def hash_otp(otp: str) -> str:
-    return sha256("otp_salt_" + otp)
-
-def send_otp_email(email: str, otp: str) -> None:
-    """
-    DEMO MODE:
-    Replace this with SendGrid / SES / Resend in production
-    """
-    st.info(f"📧 DEMO OTP for {email}: **{otp}**")
-
-def start_otp_flow(email: str) -> None:
-    otp = generate_otp()
-    st.session_state.otp_email = email
-    st.session_state.otp_hash = hash_otp(otp)
-    st.session_state.otp_expiry = time.time() + OTP_TTL_SECONDS
-    send_otp_email(email, otp)
-
-def verify_otp(entered: str) -> Tuple[bool, str]:
-    if not st.session_state.otp_hash:
-        return False, "No OTP requested."
-    if time.time() > st.session_state.otp_expiry:
-        return False, "OTP expired. Please request a new one."
-    if hash_otp(entered) != st.session_state.otp_hash:
-        return False, "Invalid OTP."
-    return True, ""
 
 cookies = None
 
@@ -409,147 +372,106 @@ auto_login()
 # 7) AUTH UI
 # ============================================================
 
-# ============================================================
-# 7) AUTH UI (LOGIN / SIGN UP / OTP / RECOVERY)
-# ============================================================
-
 def auth_ui() -> None:
     st.title("🔐 " + APP_NAME)
     st.caption(f"Version {APP_VERSION}")
 
-    tabs = st.tabs(["Log In", "Sign Up"])
+    tabs = st.tabs(["Log In", "Sign Up", "Reset Password"])
 
-    # --------------------------------------------------------
-    # LOG IN
-    # --------------------------------------------------------
     with tabs[0]:
-        st.subheader("Log In")
-
-        email = st.text_input("Email (username)", key="login_email")
+        email = st.text_input("Email", key="login_email")
         pw = st.text_input("Password", type="password", key="login_pw")
         remember = st.checkbox("Remember me", value=True)
 
-        if st.button("Log In"):
+        if st.button("Log In", key="btn_login"):
             if not email or not pw:
                 st.error("Please enter email and password.")
-            else:
-                pw_h = hash_pw(pw)
+                return
 
-                if DB_OK:
-                    user = db_get_user(email)
-                    if user and user["pw"] == pw_h:
-                        st.session_state.current_user = email
-                        st.session_state.ai_uses = db_get_usage(email)
-                        if remember:
-                            cookie_set_user(email)
-                        st.success("Logged in successfully.")
-                        st.rerun()
-                    else:
-                        st.error("Invalid email or password.")
-                else:
-                    user = st.session_state.users.get(email)
-                    if user and user["pw"] == pw_h:
-                        st.session_state.current_user = email
-                        if remember:
-                            cookie_set_user(email)
-                        st.success("Logged in successfully.")
-                        st.rerun()
-                    else:
-                        st.error("Invalid email or password.")
+            pw_h = hash_pw(pw)
 
-        # ----------------------------------------------------
-        # EMAIL OTP LOGIN
-        # ----------------------------------------------------
-        st.markdown("---")
-        st.markdown("### 🔐 Log in with Email OTP")
-
-        otp_email = st.text_input("Email for OTP login", key="otp_email_input")
-
-        if st.button("Send OTP"):
-            if not otp_email:
-                st.error("Please enter your email.")
-            else:
-                if DB_OK and not db_get_user(otp_email):
-                    st.error("No account found for this email.")
-                elif not DB_OK and otp_email not in st.session_state.users:
-                    st.error("No account found for this email.")
-                else:
-                    start_otp_flow(otp_email)
-
-        if st.session_state.otp_email:
-            entered_otp = st.text_input("Enter 6-digit OTP", max_chars=6)
-
-            if st.button("Verify OTP"):
-                ok, err = verify_otp(entered_otp)
-                if not ok:
-                    st.error(err)
-                else:
-                    st.session_state.current_user = st.session_state.otp_email
-                    cookie_set_user(st.session_state.otp_email)
-                    st.success("Logged in via OTP.")
-                    st.session_state.otp_email = None
-                    st.session_state.otp_hash = None
-                    st.session_state.otp_expiry = None
+            if DB_OK:
+                user = db_get_user(email)
+                if user and user["pw"] == pw_h:
+                    st.session_state.current_user = email
+                    st.session_state.ai_uses = db_get_usage(email)
+                    bill = db_get_billing(email)
+                    st.session_state.billing_status = bill.get("status", "unpaid")
+                    st.session_state.last_payment_event = bill.get("updated_at")
+                    if remember:
+                        cookie_set_user(email)
                     st.rerun()
-
-        # ----------------------------------------------------
-        # HELP LINKS
-        # ----------------------------------------------------
-        st.markdown("---")
-        st.markdown("### Need help?")
-
-        if st.button("Forgot username (email)?"):
-            st.info("Your username is the email address you used during sign-up.")
-
-        if st.button("Forgot password?"):
-            reset_email = st.text_input("Account email", key="reset_email")
-            new_pw = st.text_input("New password", type="password", key="reset_pw")
-
-            if st.button("Reset password"):
-                if not reset_email or not new_pw:
-                    st.error("Please enter email and new password.")
                 else:
-                    pw_h = hash_pw(new_pw)
-                    if DB_OK:
-                        if not db_get_user(reset_email):
-                            st.error("Email not found.")
-                        else:
-                            db_set_pw(reset_email, pw_h)
-                            st.success("Password reset successfully.")
-                    else:
-                        if reset_email in st.session_state.users:
-                            st.session_state.users[reset_email]["pw"] = pw_h
-                            st.success("Password reset successfully.")
-                        else:
-                            st.error("Email not found.")
+                    st.error("Invalid credentials.")
+                return
 
-    # --------------------------------------------------------
-    # SIGN UP
-    # --------------------------------------------------------
+            user = st.session_state.users.get(email)
+            if user and user["pw"] == pw_h:
+                st.session_state.current_user = email
+                st.session_state.ai_uses = 0
+                if remember:
+                    cookie_set_user(email)
+                st.rerun()
+            else:
+                st.error("Invalid credentials.")
+
     with tabs[1]:
-        st.subheader("Create Account")
+        email = st.text_input("New Email", key="signup_email")
+        pw = st.text_input("New Password", type="password", key="signup_pw")
 
-        email = st.text_input("Email", key="signup_email")
-        pw = st.text_input("Password", type="password", key="signup_pw")
-
-        if st.button("Create Account"):
+        if st.button("Create Account", key="btn_signup"):
             if not email or not pw:
                 st.error("Please enter email and password.")
-            else:
-                pw_h = hash_pw(pw)
-                if DB_OK:
-                    if db_get_user(email):
-                        st.error("Account already exists.")
-                    else:
-                        db_create_user(email, pw_h)
-                        st.success("Account created. Please log in.")
-                else:
-                    if email in st.session_state.users:
-                        st.error("Account already exists.")
-                    else:
-                        st.session_state.users[email] = {"pw": pw_h, "tier": "Free"}
-                        st.success("Account created. Please log in.")
+                return
 
+            pw_h = hash_pw(pw)
+
+            if DB_OK:
+                if db_get_user(email):
+                    st.error("Account already exists.")
+                else:
+                    ok = db_create_user(email, pw_h)
+                    if ok:
+                        st.success("Account created. Please log in.")
+                    else:
+                        st.error("Could not create account (db error).")
+                return
+
+            if email in st.session_state.users:
+                st.error("Account already exists.")
+            else:
+                st.session_state.users[email] = {"pw": pw_h, "tier": "Free"}
+                st.success("Account created. Please log in.")
+
+    with tabs[2]:
+        email = st.text_input("Account Email", key="reset_email")
+        new_pw = st.text_input("New Password", type="password", key="reset_pw")
+
+        if st.button("Reset Password", key="btn_reset"):
+            if not email or not new_pw:
+                st.error("Please enter email and a new password.")
+                return
+
+            pw_h = hash_pw(new_pw)
+
+            if DB_OK:
+                if not db_get_user(email):
+                    st.error("Email not found.")
+                else:
+                    db_set_pw(email, pw_h)
+                    st.success("Password updated.")
+                return
+
+            if email in st.session_state.users:
+                st.session_state.users[email]["pw"] = pw_h
+                st.success("Password updated.")
+            else:
+                st.error("Email not found.")
+
+
+# ============================================================
+# 8) BILLING + UPGRADE
+# ============================================================
 
 def stripe_stub_checkout_link() -> str:
     return "https://example.com/stripe-checkout-session"
@@ -649,10 +571,35 @@ def portfolio_template_csv() -> bytes:
 # ============================================================
 # 11) ANALYTICS
 # ============================================================
-# ============================================================
-# LIVE MARKETS UTILITIES
-# ============================================================
 
+def sector_impact(move: float, primary: str) -> pd.DataFrame:
+    rows = []
+    for s in SECTORS:
+        impact = float(move) if s == primary else float(move) * 0.35
+        rows.append({"Sector": s, "Score": impact})
+    df = pd.DataFrame(rows)
+    mx = float(df["Score"].abs().max())
+    df["Score"] = 0.0 if mx == 0 else (df["Score"] / mx * 5.0).round(2)
+    return df
+
+def diversification_and_hhi(port: pd.DataFrame) -> Tuple[float, float]:
+    w = port["Allocation"] / port["Allocation"].sum()
+    hhi = float(np.sum(w ** 2))
+    div = float(1.0 - hhi)
+    return round(div, 2), round(hhi, 2)
+
+def portfolio_sensitivity(port: pd.DataFrame, scenario_df: pd.DataFrame) -> float:
+    merged = port.merge(scenario_df, on="Sector", how="left")
+    merged["Score"] = merged["Score"].fillna(0.0)
+    w = merged["Allocation"] / merged["Allocation"].sum()
+    return float((w * merged["Score"]).sum())
+
+def sector_bar_chart(df: pd.DataFrame) -> alt.Chart:
+    return alt.Chart(df).mark_bar().encode(
+        x=alt.X("Sector:N", sort=None),
+        y=alt.Y("Score:Q"),
+        tooltip=["Sector", "Score"],
+    ).properties(height=280)
 
 
 # ============================================================
@@ -1551,5 +1498,3 @@ if __name__ == "__main__":
 # padding-line-0440
 # padding-line-0441
 # padding-line-0442
-
-
