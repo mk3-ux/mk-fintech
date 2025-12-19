@@ -30,6 +30,7 @@ import pandas as pd
 import altair as alt
 import streamlit as st
 from fpdf import FPDF
+import yfinance as yf
 
 # Optional dependencies (safe fallbacks)
 try:
@@ -677,6 +678,60 @@ def sector_bar_chart(df: pd.DataFrame) -> alt.Chart:
         y=alt.Y("Score:Q"),
         tooltip=["Sector", "Score"],
     ).properties(height=280)
+
+# ============================================================
+# LIVE STOCK DATA
+# ============================================================
+
+DEFAULT_TICKERS = [
+    "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA",
+    "TSLA", "META", "SPY", "QQQ"
+]
+
+def fetch_live_prices(tickers: List[str]) -> pd.DataFrame:
+    rows = []
+    for t in tickers:
+        try:
+            ticker = yf.Ticker(t)
+            info = ticker.fast_info
+            price = info.get("lastPrice")
+            prev = info.get("previousClose")
+
+            if price is None or prev is None:
+                continue
+
+            change = price - prev
+            pct = (change / prev) * 100 if prev else 0
+
+            rows.append({
+                "Ticker": t,
+                "Price": round(price, 2),
+                "Change": round(change, 2),
+                "% Change": round(pct, 2),
+            })
+        except Exception:
+            continue
+
+    return pd.DataFrame(rows)
+
+def intraday_chart(ticker: str) -> Optional[alt.Chart]:
+    try:
+        df = yf.download(ticker, period="1d", interval="5m", progress=False)
+        if df.empty:
+            return None
+        df = df.reset_index()
+        return (
+            alt.Chart(df)
+            .mark_line()
+            .encode(
+                x="Datetime:T",
+                y="Close:Q",
+                tooltip=["Datetime:T", "Close:Q"]
+            )
+            .properties(height=250)
+        )
+    except Exception:
+        return None
 
 
 # ============================================================
