@@ -318,6 +318,21 @@ def is_pro() -> bool:
 # ============================================================
 # 7) AUTO LOGIN (COOKIE)
 # ============================================================
+def upgrade_current_user_to_pro():
+    email = st.session_state.current_user
+    if not email:
+        return
+
+    if DB_OK:
+        conn = _db_connect()
+        conn.execute(
+            "UPDATE users SET tier='Pro' WHERE email=?",
+            (email,)
+        )
+        conn.commit()
+        conn.close()
+
+    st.session_state.tier = "Pro"
 
 def auto_login() -> None:
     if logged_in():
@@ -692,6 +707,11 @@ def sidebar_nav() -> str:
             st.session_state.tier = "Free"
             cookie_clear_user()
             st.rerun()
+        if not is_pro():
+            if st.button("💎 Upgrade to Pro (Demo)"):
+                upgrade_current_user_to_pro()
+                st.success("You are now Pro!")
+                st.rerun()
 
         return page
 
