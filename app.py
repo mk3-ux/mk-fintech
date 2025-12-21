@@ -1,14 +1,6 @@
 # ============================================================
-# KATTA WEALTH INSIGHTS — EXTENDED SINGLE-FILE APP (1500 lines)
-# ============================================================
-# Includes:
-# - Free vs Pro plan (Pro is $24/month)
-# - Optional cookie-based remember-me (safe fallback if package missing)
-# - Optional SQLite persistence (users, usage, artifacts, billing)
-# - Market scenario + portfolio analytics
-# - Pro-only: scenario comparison, client profile, saved artifacts, PDF reports
-# - AI advisor via Groq (optional; needs GROQ_API_KEY)
-# - Stripe payments stub + Supabase auth stub
+# KATTA WEALTH INSIGHTS — FULL APP (PART 1 / 5)
+# Core setup, config, session, utilities
 # ============================================================
 
 from __future__ import annotations
@@ -16,9 +8,9 @@ from __future__ import annotations
 import os
 import io
 import json
-import time
 import uuid
 import math
+import time
 import base64
 import hashlib
 import sqlite3
@@ -33,6 +25,11 @@ from fpdf import FPDF
 
 # Optional dependencies (safe fallbacks)
 try:
+    import yfinance as yf
+except Exception:
+    yf = None
+
+try:
     from groq import Groq
 except Exception:
     Groq = None
@@ -43,11 +40,12 @@ except Exception:
     EncryptedCookieManager = None
 
 # ============================================================
-# 0) APP CONFIG
+# 0) APP CONFIG  (THEME COMES FROM .streamlit/config.toml)
 # ============================================================
 
 APP_NAME = "Katta Wealth Insights"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
+
 PRO_PRICE_USD = 24
 FREE_AI_USES = 2
 
@@ -67,24 +65,27 @@ STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
 
-st.set_page_config(APP_NAME, layout="wide")
+st.set_page_config(
+    page_title=APP_NAME,
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
 # ============================================================
 # 1) SESSION STATE
 # ============================================================
 
 def ss_init() -> None:
-    st.session_state.setdefault("users", {})
     st.session_state.setdefault("current_user", None)
+    st.session_state.setdefault("tier", "Free")
     st.session_state.setdefault("ai_uses", 0)
-    st.session_state.setdefault("show_upgrade", False)
+
     st.session_state.setdefault("scenario", None)
     st.session_state.setdefault("portfolio", None)
     st.session_state.setdefault("client", None)
+
     st.session_state.setdefault("alerts", [])
     st.session_state.setdefault("debug", False)
-    st.session_state.setdefault("billing_status", "unpaid")
-    st.session_state.setdefault("last_payment_event", None)
 
 ss_init()
 
@@ -117,9 +118,12 @@ def safe_json(obj: Any) -> str:
         return json.dumps(obj, indent=2, default=str)
     except Exception:
         return str(obj)
+# ============================================================
+# PART 2 / 5 — COOKIES, SQLITE, AUTH, PRO LOGIC
+# ============================================================
 
 # ============================================================
-# 3) OPTIONAL COOKIES
+# 3) OPTIONAL COOKIES (SAFE FALLBACK)
 # ============================================================
 
 cookies = None
@@ -136,63 +140,78 @@ _COOKIES_OK = cookies_ready()
 def cookie_get_user() -> Optional[str]:
     if not _COOKIES_OK:
         return None
-    return cookies.get("user")
+    try:
+        return cookies.get("user")
+    except Exception:
+        return None
 
 def cookie_set_user(email: str) -> None:
-    if _COOKIES_OK:
+    if not _COOKIES_OK:
+        return
+    try:
         cookies["user"] = email
         cookies.save()
+    except Exception:
+        pass
 
 def cookie_clear_user() -> None:
-    if _COOKIES_OK:
+    if not _COOKIES_OK:
+        return
+    try:
         cookies["user"] = ""
         cookies.save()
+    except Exception:
+        pass
+
 
 # ============================================================
-# 4) SQLITE
+# 4) SQLITE (USERS, USAGE, BILLING, ARTIFACTS)
 # ============================================================
 
 def _db_connect() -> sqlite3.Connection:
     conn = sqlite3.connect(SQLITE_PATH, check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA foreign_keys=ON;")
     return conn
 
 def _db_init(conn: sqlite3.Connection) -> None:
     conn.execute("""
     CREATE TABLE IF NOT EXISTS users (
         email TEXT PRIMARY KEY,
-        pw_hash TEXT,
-        tier TEXT,
-        created_at TEXT
+        pw_hash TEXT NOT NULL,
+        tier TEXT NOT NULL DEFAULT 'Free',
+        created_at TEXT NOT NULL
     );
     """)
     conn.execute("""
     CREATE TABLE IF NOT EXISTS usage (
         email TEXT PRIMARY KEY,
-        ai_uses INTEGER,
-        updated_at TEXT
-    );
-    """)
-    conn.execute("""
-    CREATE TABLE IF NOT EXISTS artifacts (
-        id TEXT PRIMARY KEY,
-        email TEXT,
-        kind TEXT,
-        payload_json TEXT,
-        created_at TEXT
+        ai_uses INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL
     );
     """)
     conn.execute("""
     CREATE TABLE IF NOT EXISTS billing (
         email TEXT PRIMARY KEY,
-        status TEXT,
-        plan_name TEXT,
-        updated_at TEXT
+        status TEXT NOT NULL DEFAULT 'unpaid',
+        plan_name TEXT NOT NULL DEFAULT 'Free',
+        updated_at TEXT NOT NULL
+    );
+    """)
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS artifacts (
+        id TEXT PRIMARY KEY,
+        email TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
     );
     """)
     conn.commit()
 
 def db_ready() -> bool:
+    if not USE_SQLITE:
+        return False
     try:
         conn = _db_connect()
         _db_init(conn)
@@ -203,61 +222,269 @@ def db_ready() -> bool:
 
 DB_OK = db_ready()
 
+
 # ============================================================
-# 5) (… CONTINUES UNCHANGED …)
+# 5) DB HELPERS
 # ============================================================
 
-# ⚠️ STOP HERE FOR PART 1
-# The remainder of your original file continues exactly as you pasted.
-# Nothing is modified or removed.
+def db_get_user(email: str) -> Optional[Dict[str, Any]]:
+    if not DB_OK:
+        return None
+    conn = _db_connect()
+    row = conn.execute(
+        "SELECT email, pw_hash, tier FROM users WHERE email=?",
+        (email,),
+    ).fetchone()
+    conn.close()
+    if not row:
+        return None
+    return {"email": row[0], "pw": row[1], "tier": row[2]}
+
+def db_create_user(email: str, pw_hash: str) -> bool:
+    if not DB_OK:
+        return False
+    try:
+        conn = _db_connect()
+        conn.execute(
+            "INSERT INTO users(email, pw_hash, tier, created_at) VALUES (?,?,?,?)",
+            (email, pw_hash, "Free", now_iso()),
+        )
+        conn.execute(
+            "INSERT INTO usage(email, ai_uses, updated_at) VALUES (?,?,?)",
+            (email, 0, now_iso()),
+        )
+        conn.execute(
+            "INSERT INTO billing(email, status, plan_name, updated_at) VALUES (?,?,?,?)",
+            (email, "unpaid", "Free", now_iso()),
+        )
+        conn.commit()
+        conn.close()
+        return True
+    except Exception:
+        return False
+
+def db_set_tier(email: str, tier: str) -> None:
+    if not DB_OK:
+        return
+    conn = _db_connect()
+    conn.execute("UPDATE users SET tier=? WHERE email=?", (tier, email))
+    conn.commit()
+    conn.close()
+
+def db_get_usage(email: str) -> int:
+    if not DB_OK:
+        return st.session_state.ai_uses
+    conn = _db_connect()
+    row = conn.execute(
+        "SELECT ai_uses FROM usage WHERE email=?",
+        (email,),
+    ).fetchone()
+    conn.close()
+    return int(row[0]) if row else 0
+
+def db_set_usage(email: str, uses: int) -> None:
+    if not DB_OK:
+        st.session_state.ai_uses = uses
+        return
+    conn = _db_connect()
+    conn.execute(
+        "INSERT OR REPLACE INTO usage(email, ai_uses, updated_at) VALUES (?,?,?)",
+        (email, uses, now_iso()),
+    )
+    conn.commit()
+    conn.close()
+
+
 # ============================================================
-# 16.5) LIVE STOCK DATA (OPTIONAL)
+# 6) TIER / PRO LOGIC (AUTHORITATIVE)
 # ============================================================
 
-try:
-    import yfinance as yf
-except Exception:
-    yf = None
+def effective_tier() -> str:
+    if DEV_MODE:
+        return "Pro"
+    if not logged_in():
+        return "Free"
+    email = st.session_state.current_user
+    if DB_OK:
+        u = db_get_user(email)
+        if u:
+            return u.get("tier", "Free")
+    return "Free"
 
+def is_pro() -> bool:
+    return effective_tier() == "Pro"
+
+
+# ============================================================
+# 7) AUTO LOGIN (COOKIE)
+# ============================================================
+
+def auto_login() -> None:
+    if logged_in():
+        return
+    saved = cookie_get_user()
+    if not saved:
+        return
+    if DB_OK:
+        u = db_get_user(saved)
+        if u:
+            st.session_state.current_user = saved
+            st.session_state.tier = u["tier"]
+            st.session_state.ai_uses = db_get_usage(saved)
+
+auto_login()
+
+
+# ============================================================
+# 8) AUTH UI (LOGIN / SIGNUP)
+# ============================================================
+
+def auth_ui() -> None:
+    st.title(APP_NAME)
+    st.caption(f"Version {APP_VERSION}")
+
+    tab_login, tab_signup = st.tabs(["Log In", "Sign Up"])
+
+    with tab_login:
+        email = st.text_input("Email")
+        pw = st.text_input("Password", type="password")
+        remember = st.checkbox("Remember me", value=True)
+
+        if st.button("Log In"):
+            if not email or not pw:
+                st.error("Missing email or password.")
+                return
+
+            pw_h = hash_pw(pw)
+
+            if DB_OK:
+                user = db_get_user(email)
+                if user and user["pw"] == pw_h:
+                    st.session_state.current_user = email
+                    st.session_state.tier = user["tier"]
+                    st.session_state.ai_uses = db_get_usage(email)
+                    if remember:
+                        cookie_set_user(email)
+                    st.rerun()
+                else:
+                    st.error("Invalid credentials.")
+
+    with tab_signup:
+        email = st.text_input("New Email")
+        pw = st.text_input("New Password", type="password")
+
+        if st.button("Create Account"):
+            if not email or not pw:
+                st.error("Missing email or password.")
+                return
+
+            ok = db_create_user(email, hash_pw(pw))
+            if ok:
+                st.success("Account created. Please log in.")
+            else:
+                st.error("Account already exists.")
+# ============================================================
+# PART 3 / 5 — CORE FEATURES (NO UI ROUTING YET)
+# ============================================================
+
+# ============================================================
+# 9) MARKET SCENARIO
+# ============================================================
+
+SECTORS = [
+    "Technology",
+    "Financials",
+    "Healthcare",
+    "Consumer",
+    "Energy",
+    "Real Estate",
+    "Fixed Income",
+]
+
+def sector_impact(move: float, primary: str) -> pd.DataFrame:
+    rows = []
+    for s in SECTORS:
+        impact = move if s == primary else move * 0.35
+        rows.append({"Sector": s, "Score": round(impact, 2)})
+
+    df = pd.DataFrame(rows)
+    max_abs = df["Score"].abs().max()
+    if max_abs > 0:
+        df["Score"] = (df["Score"] / max_abs * 5).round(2)
+    return df
+
+
+# ============================================================
+# 10) PORTFOLIO ANALYZER (SECTOR-BASED)
+# ============================================================
+
+REQUIRED_PORTFOLIO_COLUMNS = ["Sector", "Allocation"]
+
+def validate_portfolio_df(df: pd.DataFrame) -> Tuple[bool, str]:
+    missing = [c for c in REQUIRED_PORTFOLIO_COLUMNS if c not in df.columns]
+    if missing:
+        return False, f"Missing columns: {', '.join(missing)}"
+
+    try:
+        df["Allocation"] = pd.to_numeric(df["Allocation"])
+    except Exception:
+        return False, "Allocation must be numeric."
+
+    if (df["Allocation"] < 0).any():
+        return False, "Allocation must be non-negative."
+
+    return True, "OK"
+
+
+def portfolio_template_csv() -> bytes:
+    sample = pd.DataFrame({
+        "Sector": ["Technology", "Financials", "Fixed Income"],
+        "Allocation": [40, 30, 30],
+    })
+    return sample.to_csv(index=False).encode("utf-8")
+
+
+def diversification_and_hhi(port: pd.DataFrame) -> Tuple[float, float]:
+    weights = port["Allocation"] / port["Allocation"].sum()
+    hhi = float((weights ** 2).sum())
+    diversification = 1 - hhi
+    return round(diversification, 2), round(hhi, 2)
+
+
+# ============================================================
+# 11) LIVE STOCK DATA
+# ============================================================
 
 @st.cache_data(ttl=60)
 def get_live_price(ticker: str) -> Dict[str, Any]:
-    """
-    Returns latest price + intraday change.
-    Safe fallback if yfinance is unavailable.
-    """
     if yf is None:
         return {"price": None, "change": None}
 
     try:
-        t = yf.Ticker(ticker)
-        hist = t.history(period="1d", interval="1m")
-
+        hist = yf.Ticker(ticker).history(period="1d", interval="1m")
         if hist.empty:
             return {"price": None, "change": None}
 
-        last_price = float(hist["Close"].iloc[-1])
-        open_price = float(hist["Open"].iloc[0])
-
+        last = float(hist["Close"].iloc[-1])
+        open_ = float(hist["Open"].iloc[0])
         return {
-            "price": round(last_price, 2),
-            "change": round(last_price - open_price, 2),
+            "price": round(last, 2),
+            "change": round(last - open_, 2),
         }
     except Exception:
         return {"price": None, "change": None}
 
 
 # ============================================================
-# 16.6) PORTFOLIO TRACKER (HOLDINGS-BASED)
+# 12) HOLDINGS-BASED PORTFOLIO TRACKER (PRO)
 # ============================================================
 
 REQUIRED_HOLDINGS_COLUMNS = ["Ticker", "Shares", "Cost_Basis"]
 
-
 def validate_holdings_df(df: pd.DataFrame) -> Tuple[bool, str]:
     missing = [c for c in REQUIRED_HOLDINGS_COLUMNS if c not in df.columns]
     if missing:
-        return False, f"Missing column(s): {', '.join(missing)}"
+        return False, f"Missing columns: {', '.join(missing)}"
 
     try:
         df["Shares"] = pd.to_numeric(df["Shares"])
@@ -265,22 +492,15 @@ def validate_holdings_df(df: pd.DataFrame) -> Tuple[bool, str]:
     except Exception:
         return False, "Shares and Cost_Basis must be numeric."
 
-    if (df["Shares"] <= 0).any():
-        return False, "Shares must be greater than zero."
-
     return True, "OK"
 
 
 def compute_portfolio_holdings(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Computes live value and P&L for holdings.
-    """
     rows = []
 
     for _, r in df.iterrows():
-        ticker = str(r["Ticker"]).upper().strip()
-        live = get_live_price(ticker)
-
+        t = str(r["Ticker"]).upper().strip()
+        live = get_live_price(t)
         if live["price"] is None:
             continue
 
@@ -290,7 +510,7 @@ def compute_portfolio_holdings(df: pd.DataFrame) -> pd.DataFrame:
         pnl = value - (shares * cost)
 
         rows.append({
-            "Ticker": ticker,
+            "Ticker": t,
             "Shares": shares,
             "Live Price": live["price"],
             "Market Value": round(value, 2),
@@ -301,11 +521,10 @@ def compute_portfolio_holdings(df: pd.DataFrame) -> pd.DataFrame:
     if not rows:
         return pd.DataFrame()
 
-    df_out = pd.DataFrame(rows)
-    df_out.loc["TOTAL", "Market Value"] = df_out["Market Value"].sum()
-    df_out.loc["TOTAL", "PnL"] = df_out["PnL"].sum()
-
-    return df_out
+    out = pd.DataFrame(rows)
+    out.loc["TOTAL", "Market Value"] = out["Market Value"].sum()
+    out.loc["TOTAL", "PnL"] = out["PnL"].sum()
+    return out
 
 
 def holdings_template_csv() -> bytes:
@@ -315,23 +534,19 @@ def holdings_template_csv() -> bytes:
         "Cost_Basis": [150, 280, 400],
     })
     return sample.to_csv(index=False).encode("utf-8")
+
+
 # ============================================================
-# 16.7) STOCK RESEARCH — FUNDAMENTALS
+# 13) STOCK RESEARCH — FUNDAMENTALS
 # ============================================================
 
 @st.cache_data(ttl=3600)
 def get_stock_fundamentals(ticker: str) -> Dict[str, Any]:
-    """
-    Returns key fundamentals for research.
-    Safe fallback if yfinance unavailable.
-    """
     if yf is None:
         return {}
 
     try:
-        t = yf.Ticker(ticker)
-        info = t.info or {}
-
+        info = yf.Ticker(ticker).info or {}
         return {
             "Ticker": ticker,
             "Company": info.get("shortName"),
@@ -341,34 +556,25 @@ def get_stock_fundamentals(ticker: str) -> Dict[str, Any]:
             "PE Ratio": info.get("trailingPE"),
             "Forward PE": info.get("forwardPE"),
             "Dividend Yield": info.get("dividendYield"),
-            "52W High": info.get("fiftyTwoWeekHigh"),
-            "52W Low": info.get("fiftyTwoWeekLow"),
             "Beta": info.get("beta"),
-            "EPS": info.get("trailingEps"),
         }
     except Exception:
         return {}
 
 
 # ============================================================
-# 16.8) DIVIDEND TRACKER
+# 14) DIVIDEND TRACKER (PRO)
 # ============================================================
 
 @st.cache_data(ttl=3600)
 def get_dividend_history(ticker: str) -> pd.DataFrame:
-    """
-    Returns dividend payment history.
-    """
     if yf is None:
         return pd.DataFrame()
 
     try:
-        t = yf.Ticker(ticker)
-        divs = t.dividends
-
+        divs = yf.Ticker(ticker).dividends
         if divs is None or divs.empty:
             return pd.DataFrame()
-
         df = divs.reset_index()
         df.columns = ["Date", "Dividend"]
         return df
@@ -377,18 +583,16 @@ def get_dividend_history(ticker: str) -> pd.DataFrame:
 
 
 def annual_dividend(div_df: pd.DataFrame) -> float:
-    """
-    Calculates trailing-12-month dividend.
-    """
     if div_df.empty:
         return 0.0
-
-    last_year = div_df[div_df["Date"] >= (pd.Timestamp.now() - pd.DateOffset(years=1))]
+    last_year = div_df[
+        div_df["Date"] >= (pd.Timestamp.now() - pd.DateOffset(years=1))
+    ]
     return round(float(last_year["Dividend"].sum()), 2)
 
 
 # ============================================================
-# 16.9) STOCK SCREENER (RULES-BASED)
+# 15) STOCK SCREENER (PRO)
 # ============================================================
 
 def screen_stocks(
@@ -396,17 +600,10 @@ def screen_stocks(
     max_pe: float = 25.0,
     min_div_yield: float = 0.0,
 ) -> pd.DataFrame:
-    """
-    Simple screener:
-    - PE < max_pe
-    - Dividend Yield >= min_div_yield
-    """
     rows = []
 
     for t in tickers:
-        t = t.upper().strip()
         f = get_stock_fundamentals(t)
-
         if not f:
             continue
 
@@ -416,32 +613,22 @@ def screen_stocks(
         if pe is not None and pe <= max_pe and dy >= min_div_yield:
             rows.append(f)
 
-    if not rows:
-        return pd.DataFrame()
-
     return pd.DataFrame(rows)
 
 
 # ============================================================
-# 16.10) PORTFOLIO INSIGHTS (AI CONTEXT BUILDER)
+# 16) AI PORTFOLIO CONTEXT BUILDER
 # ============================================================
 
 def build_portfolio_insights_context(
     holdings_df: pd.DataFrame,
     fundamentals_df: Optional[pd.DataFrame] = None,
 ) -> Dict[str, Any]:
-    """
-    Prepares structured context for AI insights.
-    """
-    ctx = {
-        "total_value": None,
-        "total_pnl": None,
-        "positions": [],
-    }
+    ctx = {"positions": []}
 
     if holdings_df is not None and not holdings_df.empty:
-        ctx["total_value"] = round(float(holdings_df.loc["TOTAL", "Market Value"]), 2)
-        ctx["total_pnl"] = round(float(holdings_df.loc["TOTAL", "PnL"]), 2)
+        ctx["total_value"] = float(holdings_df.loc["TOTAL", "Market Value"])
+        ctx["total_pnl"] = float(holdings_df.loc["TOTAL", "PnL"])
 
         for _, r in holdings_df.drop(index="TOTAL", errors="ignore").iterrows():
             ctx["positions"].append({
@@ -454,48 +641,129 @@ def build_portfolio_insights_context(
         ctx["fundamentals"] = fundamentals_df.to_dict(orient="records")
 
     return ctx
-tabs = st.tabs([
-    "Market Scenario (Free)",
-    "Portfolio Analyzer (Free)",
+# ============================================================
+# PART 4 / 5 — SIDEBAR NAVIGATION & PAGE ROUTER
+# ============================================================
+
+# ============================================================
+# 17) FEATURE REGISTRY (AUTHORITATIVE)
+# ============================================================
+
+FREE_PAGES = [
+    "Market Scenario",
+    "Portfolio Analyzer",
     "Live Stocks",
-    "Portfolio Tracker",
     "Stock Research",
+]
+
+PRO_PAGES = [
+    "Portfolio Tracker",
     "Dividend Tracker",
     "Stock Screener",
-    "Scenario Comparison (Pro)",
-    "Client Profile (Pro)",
-    "AI Advisor (Free preview + Pro)",
-    "Reports (Pro)",
-    "Saved (Pro)",
-    "Billing",
-    "Integrations"
-    "Performance & Risk",
-    "Watchlist"
-    "Backtesting",
-    "Goals",
-    "Taxes",
-    "Advisor Letter"
+]
+
+def allowed_pages() -> List[str]:
+    return FREE_PAGES + PRO_PAGES if is_pro() else FREE_PAGES
 
 
-])
-with tabs[2]:
-    st.subheader("📈 Live Stock Prices")
+# ============================================================
+# 18) SIDEBAR NAVIGATION (LEFT SIDE)
+# ============================================================
 
-    tickers = st.text_input(
-        "Enter tickers (comma separated)",
-        value="AAPL,MSFT,NVDA"
+def sidebar_nav() -> str:
+    with st.sidebar:
+        st.markdown("## 📂 Navigation")
+        st.caption(f"User: {st.session_state.current_user}")
+        st.caption(f"Plan: {'Pro' if is_pro() else 'Free'}")
+
+        page = st.radio(
+            "Go to",
+            allowed_pages(),
+            index=0,
+        )
+
+        st.markdown("---")
+
+        if not is_pro():
+            st.info("🔒 Upgrade to Pro to unlock advanced features")
+
+        if st.button("Log out"):
+            st.session_state.current_user = None
+            st.session_state.tier = "Free"
+            cookie_clear_user()
+            st.rerun()
+
+        return page
+
+
+# ============================================================
+# 19) PAGE RENDERERS (CENTER CONTENT)
+# ============================================================
+
+def render_market_scenario():
+    st.header("Market Scenario")
+
+    move = st.slider("Market move (%)", -20, 20, 0)
+    sector = st.selectbox("Primary sector", SECTORS)
+
+    df = sector_impact(move, sector)
+    st.session_state["scenario"] = df
+
+    st.dataframe(df, use_container_width=True)
+
+
+def render_portfolio_analyzer():
+    st.header("Portfolio Analyzer")
+
+    st.download_button(
+        "Download CSV Template",
+        portfolio_template_csv(),
+        file_name="portfolio_template.csv",
+        mime="text/csv",
     )
 
+    f = st.file_uploader("Upload Portfolio CSV", type="csv")
+    if not f:
+        return
+
+    df = pd.read_csv(f)
+    ok, msg = validate_portfolio_df(df)
+    if not ok:
+        st.error(msg)
+        return
+
+    st.session_state["portfolio"] = df
+    st.dataframe(df, use_container_width=True)
+
+    if is_pro():
+        div, hhi = diversification_and_hhi(df)
+        st.metric("Diversification Score", div)
+        st.metric("Concentration Risk (HHI)", hhi)
+
+
+def render_live_stocks():
+    st.header("Live Stocks")
+
+    tickers = st.text_input("Tickers (comma separated)", "AAPL,MSFT,NVDA")
     cols = st.columns(3)
+
     for i, t in enumerate([x.strip().upper() for x in tickers.split(",")]):
         data = get_live_price(t)
-        cols[i % 3].metric(
-            t,
-            data["price"] or "N/A",
-            data["change"]
-        )
-with tabs[3]:
-    st.subheader("📦 Portfolio Tracker")
+        cols[i % 3].metric(t, data["price"], data["change"])
+
+
+def render_stock_research():
+    st.header("Stock Research")
+
+    ticker = st.text_input("Ticker", "AAPL").upper()
+    data = get_stock_fundamentals(ticker)
+
+    if data:
+        st.json(data)
+
+
+def render_portfolio_tracker():
+    st.header("Portfolio Tracker")
 
     st.download_button(
         "Download Holdings CSV Template",
@@ -505,105 +773,124 @@ with tabs[3]:
     )
 
     f = st.file_uploader("Upload Holdings CSV", type="csv")
-    if f:
-        df = pd.read_csv(f)
-        ok, msg = validate_holdings_df(df)
+    if not f:
+        return
 
-        if not ok:
-            st.error(msg)
-        else:
-            holdings = compute_portfolio_holdings(df)
-            st.dataframe(holdings, use_container_width=True)
+    df = pd.read_csv(f)
+    ok, msg = validate_holdings_df(df)
+    if not ok:
+        st.error(msg)
+        return
 
-            if "TOTAL" in holdings.index:
-                st.metric(
-                    "Total Portfolio Value",
-                    f"${round(holdings.loc['TOTAL','Market Value'],2)}"
-                )
-                st.metric(
-                    "Total P&L",
-                    f"${round(holdings.loc['TOTAL','PnL'],2)}"
-                )
+    holdings = compute_portfolio_holdings(df)
+    st.dataframe(holdings, use_container_width=True)
 
-            if is_pro() and st.button("Generate Portfolio Insights"):
-                ctx = build_portfolio_insights_context(holdings)
-                st.markdown(ai(
-                    "Analyze this portfolio. "
-                    "Discuss concentration, risk, dividends, growth vs value. "
-                    "No investment advice.\n\n"
-                    + safe_json(ctx)
-                ))
-with tabs[4]:
-    st.subheader("🔍 Stock Research")
-
-    ticker = st.text_input("Ticker", value="AAPL").upper()
-    data = get_stock_fundamentals(ticker)
-
-    if data:
-        st.json(data)
-
-        if is_pro():
-            st.markdown(ai(
-                f"Explain fundamentals for {ticker} "
-                f"to a retail investor. No advice."
-            ))
-with tabs[5]:
-    st.subheader("💰 Dividend Tracker")
-
-    if not is_pro():
-        pro_feature_block("Dividend Tracker")
-    else:
-        ticker = st.text_input("Dividend Ticker", value="MSFT").upper()
-        divs = get_dividend_history(ticker)
-
-        if divs.empty:
-            st.info("No dividend data found.")
-        else:
-            st.dataframe(divs.tail(10), use_container_width=True)
-            st.metric(
-                "Trailing 12M Dividend",
-                f"${annual_dividend(divs)}"
-            )
-with tabs[6]:
-    st.subheader("🧮 Stock Screener")
-
-    if not is_pro():
-        pro_feature_block("Stock Screener")
-    else:
-        universe = st.text_area(
-            "Ticker Universe",
-            "AAPL,MSFT,GOOGL,AMZN,META,NVDA"
+    if "TOTAL" in holdings.index:
+        st.metric(
+            "Total Portfolio Value",
+            f"${round(holdings.loc['TOTAL','Market Value'],2)}"
         )
-        max_pe = st.slider("Max PE", 5, 50, 25)
-        min_div = st.slider("Min Dividend Yield", 0.0, 0.1, 0.0)
-
-        df = screen_stocks(
-            [x.strip() for x in universe.split(",")],
-            max_pe=max_pe,
-            min_div_yield=min_div
+        st.metric(
+            "Total P&L",
+            f"${round(holdings.loc['TOTAL','PnL'],2)}"
         )
 
-        st.dataframe(df, use_container_width=True)
+
+def render_dividend_tracker():
+    st.header("Dividend Tracker")
+
+    ticker = st.text_input("Dividend Ticker", "MSFT").upper()
+    divs = get_dividend_history(ticker)
+
+    if divs.empty:
+        st.info("No dividend data found.")
+        return
+
+    st.dataframe(divs.tail(10), use_container_width=True)
+    st.metric("Trailing 12M Dividend", f"${annual_dividend(divs)}")
+
+
+def render_stock_screener():
+    st.header("Stock Screener")
+
+    universe = st.text_area(
+        "Ticker Universe",
+        "AAPL,MSFT,GOOGL,AMZN,META,NVDA"
+    )
+
+    max_pe = st.slider("Max PE", 5, 50, 25)
+    min_div = st.slider("Min Dividend Yield", 0.0, 0.1, 0.0)
+
+    df = screen_stocks(
+        [x.strip().upper() for x in universe.split(",")],
+        max_pe=max_pe,
+        min_div_yield=min_div,
+    )
+
+    st.dataframe(df, use_container_width=True)
+
+
 # ============================================================
-# 16.11) PERFORMANCE & RISK METRICS
+# 20) MAIN ROUTER
+# ============================================================
+
+def main():
+    if not logged_in():
+        auth_ui()
+        return
+
+    flush_alerts()
+
+    page = sidebar_nav()
+
+    # ---------- FREE ----------
+    if page == "Market Scenario":
+        render_market_scenario()
+
+    elif page == "Portfolio Analyzer":
+        render_portfolio_analyzer()
+
+    elif page == "Live Stocks":
+        render_live_stocks()
+
+    elif page == "Stock Research":
+        render_stock_research()
+
+    # ---------- PRO ----------
+    elif is_pro() and page == "Portfolio Tracker":
+        render_portfolio_tracker()
+
+    elif is_pro() and page == "Dividend Tracker":
+        render_dividend_tracker()
+
+    elif is_pro() and page == "Stock Screener":
+        render_stock_screener()
+
+
+if __name__ == "__main__":
+    main()
+# ============================================================
+# PART 5 / 5 — ADVANCED FEATURES
+# ============================================================
+
+# ============================================================
+# 21) PERFORMANCE & RISK
 # ============================================================
 
 @st.cache_data(ttl=3600)
 def get_price_history(ticker: str, period: str = "1y") -> pd.Series:
     if yf is None:
         return pd.Series(dtype=float)
-
     try:
-        hist = yf.Ticker(ticker).history(period=period)
-        return hist["Close"]
+        return yf.Ticker(ticker).history(period=period)["Close"]
     except Exception:
         return pd.Series(dtype=float)
 
 
-def compute_returns(price_series: pd.Series) -> pd.Series:
-    if price_series.empty:
+def compute_returns(prices: pd.Series) -> pd.Series:
+    if prices.empty:
         return pd.Series(dtype=float)
-    return price_series.pct_change().dropna()
+    return prices.pct_change().dropna()
 
 
 def portfolio_volatility(returns: pd.Series) -> float:
@@ -612,33 +899,72 @@ def portfolio_volatility(returns: pd.Series) -> float:
     return round(float(returns.std() * np.sqrt(252)), 4)
 
 
-def max_drawdown(price_series: pd.Series) -> float:
-    if price_series.empty:
+def max_drawdown(prices: pd.Series) -> float:
+    if prices.empty:
         return 0.0
-    cum_max = price_series.cummax()
-    drawdown = (price_series - cum_max) / cum_max
+    running_max = prices.cummax()
+    drawdown = (prices - running_max) / running_max
     return round(float(drawdown.min()), 4)
+
+
+def render_performance_risk():
+    st.header("Performance & Risk")
+
+    if st.session_state.get("portfolio") is None:
+        st.info("Upload a portfolio first.")
+        return
+
+    holdings = st.session_state["portfolio"]
+
+    tickers = holdings["Ticker"].dropna().unique()
+    combined = []
+
+    for t in tickers:
+        prices = get_price_history(t)
+        returns = compute_returns(prices)
+        combined.append(returns)
+
+    if not combined:
+        st.info("Not enough data.")
+        return
+
+    port_returns = pd.concat(combined, axis=1).mean(axis=1)
+    st.metric("Volatility (Annualized)", portfolio_volatility(port_returns))
+    st.metric("Max Drawdown", max_drawdown((1 + port_returns).cumprod()))
+
+
 # ============================================================
-# 16.12) ASSET ALLOCATION CHART
+# 22) BACKTESTING
 # ============================================================
 
-def allocation_chart(holdings_df: pd.DataFrame) -> alt.Chart:
-    df = holdings_df.drop(index="TOTAL", errors="ignore")
-    if df.empty:
-        return alt.Chart(pd.DataFrame())
+def backtest_portfolio(holdings_df: pd.DataFrame, period: str = "3y") -> pd.DataFrame:
+    if yf is None or holdings_df.empty:
+        return pd.DataFrame()
 
-    return (
-        alt.Chart(df)
-        .mark_arc()
-        .encode(
-            theta=alt.Theta("Market Value:Q"),
-            color=alt.Color("Ticker:N"),
-            tooltip=["Ticker", "Market Value"]
-        )
-        .properties(height=300)
-    )
+    prices = {}
+    for _, r in holdings_df.drop(index="TOTAL", errors="ignore").iterrows():
+        hist = yf.Ticker(r["Ticker"]).history(period=period)["Close"]
+        prices[r["Ticker"]] = hist * r["Shares"]
+
+    df = pd.DataFrame(prices).dropna()
+    df["Portfolio Value"] = df.sum(axis=1)
+    df["Returns"] = df["Portfolio Value"].pct_change()
+    return df.dropna()
+
+
+def render_backtesting():
+    st.header("Backtesting")
+
+    if st.session_state.get("portfolio") is None:
+        st.info("Upload portfolio first.")
+        return
+
+    bt = backtest_portfolio(st.session_state["portfolio"])
+    st.line_chart(bt["Portfolio Value"])
+
+
 # ============================================================
-# 16.13) WATCHLISTS
+# 23) WATCHLIST
 # ============================================================
 
 def get_watchlist(email: str) -> List[str]:
@@ -651,7 +977,6 @@ def get_watchlist(email: str) -> List[str]:
         (email,),
     ).fetchone()
     conn.close()
-
     return json.loads(row[0]) if row else []
 
 
@@ -668,156 +993,43 @@ def save_watchlist(email: str, tickers: List[str]) -> None:
     )
     conn.commit()
     conn.close()
-# ============================================================
-# 16.14) ALERTS FRAMEWORK
-# ============================================================
-
-def check_price_alert(ticker: str, target: float) -> bool:
-    live = get_live_price(ticker)
-    if live["price"] is None:
-        return False
-    return live["price"] >= target
 
 
-def check_pnl_alert(pnl: float, threshold: float) -> bool:
-    return pnl <= threshold
+def render_watchlist():
+    st.header("Watchlist")
 
-with tabs[14]:
-    st.subheader("📊 Performance & Risk")
+    email = st.session_state.current_user
+    watchlist = get_watchlist(email)
 
-    if st.session_state.get("portfolio") is None:
-        st.info("Upload a portfolio first.")
-    else:
-        holdings = st.session_state.get("portfolio")
-        st.altair_chart(allocation_chart(holdings), use_container_width=True)
-
-        if is_pro():
-            st.markdown(performance_insights_ai(holdings))
-with tabs[15]:
-    st.subheader("👀 Watchlist")
-
-    if not logged_in():
-        st.stop()
-
-    watchlist = get_watchlist(st.session_state.current_user)
     new = st.text_input("Add ticker")
-
     if st.button("Add"):
         watchlist.append(new.upper())
-        save_watchlist(st.session_state.current_user, list(set(watchlist)))
+        save_watchlist(email, list(set(watchlist)))
         st.rerun()
 
     for t in watchlist:
         p = get_live_price(t)
         st.metric(t, p["price"], p["change"])
+
+
 # ============================================================
-# 16.16) BACKTESTING ENGINE
-# ============================================================
-
-def backtest_portfolio(
-    holdings_df: pd.DataFrame,
-    period: str = "3y"
-) -> pd.DataFrame:
-    if yf is None or holdings_df.empty:
-        return pd.DataFrame()
-
-    prices = {}
-    for _, r in holdings_df.drop(index="TOTAL", errors="ignore").iterrows():
-        hist = yf.Ticker(r["Ticker"]).history(period=period)["Close"]
-        prices[r["Ticker"]] = hist * r["Shares"]
-
-    df = pd.DataFrame(prices).dropna()
-    df["Portfolio Value"] = df.sum(axis=1)
-    df["Returns"] = df["Portfolio Value"].pct_change()
-    return df.dropna()
-# ============================================================
-# 16.17) FACTOR EXPOSURE (SIMPLIFIED)
-# ============================================================
-
-def factor_exposure(fundamentals_df: pd.DataFrame) -> Dict[str, float]:
-    """
-    Rough heuristic:
-    - Low PE → Value
-    - High EPS growth proxy → Growth
-    - Beta > 1 → Momentum
-    """
-    if fundamentals_df.empty:
-        return {}
-
-    value = fundamentals_df["PE Ratio"].dropna().lt(20).mean()
-    growth = fundamentals_df["Forward PE"].dropna().gt(25).mean()
-    momentum = fundamentals_df["Beta"].dropna().gt(1).mean()
-
-    return {
-        "Value Tilt": round(value, 2),
-        "Growth Tilt": round(growth, 2),
-        "Momentum Tilt": round(momentum, 2),
-    }
-# ============================================================
-# 16.18) SCHEDULED ALERTS (LOGIC)
-# ============================================================
-
-def evaluate_alerts(
-    watchlist: List[str],
-    price_targets: Dict[str, float]
-) -> List[str]:
-    triggered = []
-
-    for t in watchlist:
-        target = price_targets.get(t)
-        if target and check_price_alert(t, target):
-            triggered.append(f"{t} crossed ${target}")
-
-    return triggered
-# ============================================================
-# 16.19) TAX & CAPITAL GAINS ESTIMATOR
-# ============================================================
-
-def estimate_capital_gains_tax(
-    holdings_df: pd.DataFrame,
-    tax_rate: float = 0.15
-) -> float:
-    if holdings_df.empty:
-        return 0.0
-
-    realized_gains = holdings_df.loc["TOTAL", "PnL"]
-    return round(max(realized_gains, 0) * tax_rate, 2)
-# ============================================================
-# 16.20) GOAL-BASED PLANNING
+# 24) GOALS
 # ============================================================
 
 def goal_projection(
-    current_value: float,
-    annual_contribution: float,
+    current: float,
+    annual: float,
     years: int,
-    expected_return: float
+    expected_return: float,
 ) -> float:
-    fv = current_value
+    fv = current
     for _ in range(years):
-        fv = fv * (1 + expected_return) + annual_contribution
+        fv = fv * (1 + expected_return) + annual
     return round(fv, 2)
-# ============================================================
-# 16.21) ADVISOR LETTER (AI)
-# ============================================================
 
-def advisor_letter_ai(context: Dict[str, Any]) -> str:
-    prompt = (
-        "Write a professional wealth advisor letter summarizing "
-        "portfolio performance, risks, and next steps. "
-        "No investment advice.\n\n"
-        + safe_json(context)
-    )
-    return ai(prompt)
-with tabs[16]:
-    st.subheader("📉 Backtesting")
 
-    if st.session_state.get("portfolio") is None:
-        st.info("Upload portfolio first.")
-    else:
-        bt = backtest_portfolio(st.session_state["portfolio"])
-        st.line_chart(bt["Portfolio Value"])
-with tabs[17]:
-    st.subheader("🎯 Goal Planning")
+def render_goals():
+    st.header("Goal Planning")
 
     current = st.number_input("Current Portfolio Value", 0.0)
     contrib = st.number_input("Annual Contribution", 0.0)
@@ -826,24 +1038,53 @@ with tabs[17]:
 
     fv = goal_projection(current, contrib, years, ret)
     st.metric("Projected Value", f"${fv}")
-with tabs[18]:
-    st.subheader("🧾 Tax Estimator")
+
+
+# ============================================================
+# 25) TAXES
+# ============================================================
+
+def estimate_capital_gains_tax(
+    holdings_df: pd.DataFrame,
+    tax_rate: float = 0.15,
+) -> float:
+    if holdings_df.empty:
+        return 0.0
+    pnl = holdings_df.loc["TOTAL", "PnL"]
+    return round(max(pnl, 0) * tax_rate, 2)
+
+
+def render_taxes():
+    st.header("Tax Estimator")
 
     if st.session_state.get("portfolio") is None:
         st.info("Upload holdings.")
-    else:
-        tax = estimate_capital_gains_tax(st.session_state["portfolio"])
-        st.metric("Estimated Capital Gains Tax", f"${tax}")
-with tabs[19]:
-    st.subheader("📝 Advisor Letter")
+        return
 
-    if not is_pro():
-        pro_feature_block("Advisor Letter")
-    else:
-        if st.button("Generate Advisor Letter"):
-            ctx = {
-                "portfolio": st.session_state.get("portfolio"),
-                "client": st.session_state.get("client"),
-            }
-            letter = advisor_letter_ai(ctx)
-            st.text_area("Advisor Letter", letter, height=300)
+    tax = estimate_capital_gains_tax(st.session_state["portfolio"])
+    st.metric("Estimated Capital Gains Tax", f"${tax}")
+
+
+# ============================================================
+# 26) ADVISOR LETTER (AI)
+# ============================================================
+
+def advisor_letter_ai(context: Dict[str, Any]) -> str:
+    prompt = (
+        "Write a professional advisor letter summarizing performance, "
+        "risk, and outlook. No investment advice.\n\n"
+        + safe_json(context)
+    )
+    return ai(prompt)
+
+
+def render_advisor_letter():
+    st.header("Advisor Letter")
+
+    if st.button("Generate Advisor Letter"):
+        ctx = {
+            "portfolio": st.session_state.get("portfolio"),
+            "client": st.session_state.get("client"),
+        }
+        letter = advisor_letter_ai(ctx)
+        st.text_area("Advisor Letter", letter, height=300)
