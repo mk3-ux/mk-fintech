@@ -1,51 +1,169 @@
-st.markdown("""
-<style>
-/* App background */
-.stApp {
-    background-color: #0E0E0E;
-    color: #E6E6E6;
-}
+# ============================================================
+# 0) APP CONFIG (GLOBAL)
+# ============================================================
 
-/* Sidebar */
-section[data-testid="stSidebar"] {
-    background-color: #1A1A1A;
-}
+# -----------------------------
+# App Identity
+# -----------------------------
+APP_NAME = "Katta Wealth Insights"
+APP_TAGLINE = "Learn • Analyze • Grow"
+APP_VERSION = "1.3.0"
 
-/* Headers */
-h1, h2, h3 {
-    color: #D4AF37;
-}
+# -----------------------------
+# Pricing & Plans
+# -----------------------------
+PRO_PRICE_USD = 24
+FREE_AI_USES = 2
 
-/* Buttons */
-button[kind="primary"] {
-    background-color: #D4AF37;
-    color: black;
-    border-radius: 8px;
-    font-weight: 600;
-}
+# -----------------------------
+# Environment Flags
+# -----------------------------
+DEV_MODE = False          # True = force Pro, enable role switch
+TEEN_MODE_DEFAULT = True # New users default to Teen Mode
 
-button:hover {
-    background-color: #E6C76A;
-}
+# -----------------------------
+# User Roles
+# -----------------------------
+ROLE_TEEN = "teen"
+ROLE_PARENT = "parent"
+ROLE_ADVISOR = "advisor"
+ROLE_PRO = "pro"
 
-/* Metrics */
-[data-testid="stMetricValue"] {
-    color: #D4AF37;
-}
+ALL_ROLES = [ROLE_TEEN, ROLE_PARENT, ROLE_ADVISOR, ROLE_PRO]
+DEFAULT_ROLE = ROLE_TEEN
 
-[data-testid="stMetricDelta"] {
-    color: #B0B0B0;
-}
+# -----------------------------
+# AI Configuration
+# -----------------------------
+MODEL_NAME = "llama-3.1-8b-instant"
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 
-/* Tables */
-thead tr th {
-    background-color: #1A1A1A;
-    color: #D4AF37;
-}
+# -----------------------------
+# Persistence
+# -----------------------------
+USE_SQLITE = True
+SQLITE_PATH = "kwi_app.db"
 
-tbody tr td {
-    background-color: #0E0E0E;
-    color: #E6E6E6;
-}
-</style>
-""", unsafe_allow_html=True)
+# -----------------------------
+# Cookies (Optional)
+# -----------------------------
+USE_COOKIES = True
+COOKIE_PASSWORD = os.getenv("KWI_COOKIE_PASSWORD", "change-this-secret")
+
+# -----------------------------
+# Payments / Auth (Stubs)
+# -----------------------------
+STRIPE_PUBLISHABLE_KEY = os.getenv("STRIPE_PUBLISHABLE_KEY", "")
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
+
+# ============================================================
+# 0.1) STREAMLIT PAGE CONFIG
+# ============================================================
+
+st.set_page_config(
+    page_title=APP_NAME,
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# ============================================================
+# 0.2) GLOBAL THEME — BLACK & GOLD (PREMIUM)
+# ============================================================
+
+st.markdown(
+    """
+    <style>
+    /* App background */
+    .stApp {
+        background-color: #0E0E0E;
+        color: #E6E6E6;
+    }
+
+    /* Sidebar */
+    section[data-testid="stSidebar"] {
+        background-color: #1A1A1A;
+    }
+
+    /* Headers */
+    h1, h2, h3, h4 {
+        color: #D4AF37;
+        font-weight: 700;
+    }
+
+    /* Subtext */
+    p, span, label {
+        color: #B0B0B0;
+    }
+
+    /* Buttons */
+    button[kind="primary"] {
+        background-color: #D4AF37 !important;
+        color: #0E0E0E !important;
+        border-radius: 10px;
+        font-weight: 600;
+        border: none;
+    }
+
+    button:hover {
+        background-color: #E6C76A !important;
+        color: black !important;
+    }
+
+    /* Metrics */
+    [data-testid="stMetricValue"] {
+        color: #D4AF37;
+        font-size: 1.4rem;
+    }
+
+    [data-testid="stMetricDelta"] {
+        color: #B0B0B0;
+    }
+
+    /* Tables */
+    thead tr th {
+        background-color: #1A1A1A !important;
+        color: #D4AF37 !important;
+    }
+
+    tbody tr td {
+        background-color: #0E0E0E !important;
+        color: #E6E6E6 !important;
+    }
+
+    /* Inputs */
+    input, textarea, select {
+        background-color: #1A1A1A !important;
+        color: #E6E6E6 !important;
+        border-radius: 8px;
+    }
+
+    /* Tabs */
+    button[data-baseweb="tab"] {
+        color: #B0B0B0;
+        font-weight: 600;
+    }
+
+    button[data-baseweb="tab"][aria-selected="true"] {
+        color: #D4AF37;
+        border-bottom: 2px solid #D4AF37;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# ============================================================
+# 0.3) BRAND HEADER (OPTIONAL)
+# ============================================================
+
+st.markdown(
+    f"""
+    <div style="text-align:center; margin-bottom:1rem;">
+        <h1>{APP_NAME}</h1>
+        <p style="color:#B0B0B0; font-size:1.1rem;">{APP_TAGLINE}</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
