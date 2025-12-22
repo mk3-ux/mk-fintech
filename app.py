@@ -100,7 +100,9 @@ def annual_dividend(df: pd.DataFrame) -> float:
         return 0.0
 
     # ✅ FIX: use timezone-safe now
-    cutoff = pd.Timestamp.now(tz=None) - pd.DateOffset(years=1)
+    # ✅ ALWAYS use pandas Timestamp
+    cutoff = pd.Timestamp.now(tz="UTC") - pd.DateOffset(years=1)
+
 
     last_year = df[df["Date"] >= cutoff]
 
