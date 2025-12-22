@@ -1358,7 +1358,7 @@ def main_router(page: str) -> None:
         render_stock_research()
 
     elif page == "AI Chatbot":
-    render_ai_chatbot()
+        render_ai_chatbot()
 
 
     # ---------------- PRO FEATURES (NON-AI) ----------------
