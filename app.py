@@ -1679,3 +1679,192 @@ def render_exports():
     )
 
     st.success("Exports are advisor- and audit-ready.")
+# ============================================================
+# PART 14 / 14 — AI-NATIVE LANDING PAGE (KATTA WEALTH INSIGHTS)
+# ============================================================
+
+def render_landing_page():
+    st.markdown(
+        """
+        <style>
+        .hero-container {
+            display: grid;
+            grid-template-columns: 1.1fr 1fr;
+            gap: 3rem;
+            padding: 4rem 2rem;
+        }
+
+        .hero-badge {
+            display: inline-block;
+            background: #e8f0ff;
+            color: #2563eb;
+            padding: 0.4rem 0.9rem;
+            border-radius: 999px;
+            font-weight: 600;
+            font-size: 0.85rem;
+            margin-bottom: 1rem;
+        }
+
+        .hero-title {
+            font-size: 3rem;
+            font-weight: 800;
+            line-height: 1.1;
+            margin-bottom: 1rem;
+        }
+
+        .hero-title span {
+            color: #2563eb;
+        }
+
+        .hero-subtitle {
+            font-size: 1.1rem;
+            color: #4b5563;
+            max-width: 520px;
+            margin-bottom: 2rem;
+        }
+
+        .hero-actions {
+            display: flex;
+            gap: 1rem;
+        }
+
+        .btn-primary {
+            background: #2563eb;
+            color: white;
+            padding: 0.75rem 1.4rem;
+            border-radius: 0.6rem;
+            font-weight: 600;
+            text-decoration: none;
+        }
+
+        .btn-secondary {
+            background: #f3f4f6;
+            color: #111827;
+            padding: 0.75rem 1.4rem;
+            border-radius: 0.6rem;
+            font-weight: 600;
+            text-decoration: none;
+        }
+
+        .feature-row {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 2rem;
+            margin-top: 3.5rem;
+            padding: 0 2rem;
+        }
+
+        .feature-card {
+            background: #f9fafb;
+            border-radius: 1rem;
+            padding: 2rem;
+            border: 1px solid #e5e7eb;
+        }
+
+        .feature-icon {
+            font-size: 1.8rem;
+            margin-bottom: 0.7rem;
+        }
+
+        .feature-title {
+            font-weight: 700;
+            margin-bottom: 0.4rem;
+        }
+
+        .feature-desc {
+            color: #4b5563;
+            font-size: 0.95rem;
+        }
+
+        @media (max-width: 900px) {
+            .hero-container {
+                grid-template-columns: 1fr;
+            }
+            .feature-row {
+                grid-template-columns: 1fr;
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        """
+        <div class="hero-container">
+            <div>
+                <div class="hero-badge">AI-Native Wealth Platform</div>
+
+                <div class="hero-title">
+                    <span>Katta Wealth Insights</span><br>
+                    Research Workspace for<br>
+                    Modern Investors
+                </div>
+
+                <div class="hero-subtitle">
+                    Katta Wealth Insights harnesses AI, market data, and probabilistic
+                    modeling to help investors understand portfolios, income, risk,
+                    and long-term outcomes — all in one intelligent workspace.
+                </div>
+
+                <div class="hero-actions">
+                    <a class="btn-primary" href="#">Get Started →</a>
+                    <a class="btn-secondary" href="#">Learn More</a>
+                </div>
+            </div>
+
+            <div>
+                <img src="https://raw.githubusercontent.com/streamlit/brand/master/logos/mark/streamlit-mark-primary.png"
+                     style="width:100%; border-radius: 1rem; box-shadow: 0 20px 50px rgba(0,0,0,0.15);" />
+            </div>
+        </div>
+
+        <div class="feature-row">
+            <div class="feature-card">
+                <div class="feature-icon">📊</div>
+                <div class="feature-title">AI Portfolio Intelligence</div>
+                <div class="feature-desc">
+                    Unified portfolio tracking with ETF look-through, income analysis,
+                    and risk diagnostics.
+                </div>
+            </div>
+
+            <div class="feature-card">
+                <div class="feature-icon">🎯</div>
+                <div class="feature-title">Goal Probability Engine</div>
+                <div class="feature-desc">
+                    Monte Carlo simulations quantify the probability of reaching
+                    financial goals — not guesses.
+                </div>
+            </div>
+
+            <div class="feature-card">
+                <div class="feature-icon">🧠</div>
+                <div class="feature-title">AI Research Assistant</div>
+                <div class="feature-desc">
+                    Context-aware AI explains portfolios, income, and risks in
+                    clear, investor-friendly language.
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+# ============================================================
+# MAKE LANDING PAGE THE DEFAULT HOME
+# ============================================================
+
+_old_run_app = run_app
+
+def run_app():
+    if not logged_in():
+        render_landing_page()
+        spacer(2)
+        st.markdown("### 🔐 Sign in to continue")
+        auth_ui()
+        return
+
+    page = sidebar_nav()
+    main_router(page)
