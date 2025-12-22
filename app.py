@@ -673,28 +673,71 @@ PRO_PAGES.extend([
 ])
 
 FREE_PAGES.append("About Us")
+# ============================================================
+# MAIN ROUTER — FIXED VERSION
+# ============================================================
+
+if page == "Market Scenario":
+    render_market_scenario()
+
+elif page == "Portfolio Analyzer":
+    render_portfolio_analyzer()
+
+elif page == "Live Stocks":
+    render_live_stocks()
+
+elif page == "Stock Research":
+    render_stock_research()
+
+# ---------------- PRO FEATURES ----------------
+
+elif is_pro() and page == "Portfolio Tracker":
+    render_portfolio_tracker()
+
+elif is_pro() and page == "Dividend Tracker":
+    render_dividend_tracker()
+
+elif is_pro() and page == "Stock Screener":
+    render_stock_screener()
+
 elif is_pro() and page == "Portfolio Health":
     render_portfolio_health_ai()
+
 elif is_pro() and page == "What-If Simulator":
     render_what_if_ai()
+
 elif is_pro() and page == "AI Rebalancing":
     render_ai_rebalancing()
+
 elif is_pro() and page == "Income Forecast":
     render_income_forecast_ai()
+
 elif is_pro() and page == "Risk Alerts":
     render_risk_alerts_ai()
+
 elif is_pro() and page == "Teen Explainer":
     render_teen_explainer_ai()
+
 elif is_pro() and page == "Factor Exposure":
     render_factor_exposure_ai()
+
 elif is_pro() and page == "Goal Probability":
     render_goal_probability_ai()
+
 elif is_pro() and page == "Market Commentary":
     render_market_commentary_ai()
+
 elif is_pro() and page == "Tax Optimization":
     render_tax_optimization_ai()
+
+# ---------------- FREE ----------------
+
 elif page == "About Us":
     render_about_us()
+
+else:
+    st.info("Select a feature from the left menu.")
+
 
 # ============================================================
 # 17) FEATURE REGISTRY (AUTHORITATIVE)
