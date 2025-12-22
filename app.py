@@ -69,8 +69,6 @@ st.set_page_config(
 
 @st.cache_data(ttl=3600)
 def get_dividend_history(ticker: str) -> pd.DataFrame:
-    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
-
     if yf is None:
         return pd.DataFrame()
 
@@ -80,16 +78,21 @@ def get_dividend_history(ticker: str) -> pd.DataFrame:
         if divs is None or divs.empty:
             return pd.DataFrame()
 
+        # ✅ df is CREATED FIRST
         df = divs.reset_index()
         df.columns = ["Date", "Dividend"]
 
-        # ✅ FIX: force datetime
+        # ✅ THEN Date conversion
         df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
 
-        return df.dropna(subset=["Date"])
+        # Safety: remove invalid dates
+        df = df.dropna(subset=["Date"])
+
+        return df
 
     except Exception:
         return pd.DataFrame()
+
 
 
 def annual_dividend(df: pd.DataFrame) -> float:
