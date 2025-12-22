@@ -802,30 +802,31 @@ def render_portfolio_tracker():
             f"${round(holdings.loc['TOTAL', 'PnL'], 2)}",
         )
 
-
 def render_dividend_tracker():
     st.header("Dividend Tracker")
 
-    ticker = st.text_input("Dividend Ticker", "MSFT").upper()
-    if yf is None:
-        st.warning("Dividend data unavailable.")
+    ticker = st.text_input("Dividend Ticker", "MSFT").upper().strip()
+
+    df = get_dividend_history(ticker)
+
+    if df.empty:
+        st.info("No dividend data available.")
         return
 
-    try:
-        divs = yf.Ticker(ticker).dividends
-    except Exception:
-        divs = None
+    # ✅ SAFE: Date is already datetime here
+    cutoff = pd.Timestamp.now() - pd.DateOffset(years=1)
+    last_year = df[df["Date"] >= cutoff]
 
-    if divs is None or divs.empty:
-        st.info("No dividend data found.")
-        return
+    st.subheader("Recent Dividends")
+    st.dataframe(df.tail(12), use_container_width=True)
 
-    df = divs.reset_index()
-    df.columns = ["Date", "Dividend"]
+    total = float(last_year["Dividend"].sum()) if not last_year.empty else 0.0
 
-    st.dataframe(df.tail(10), use_container_width=True)
-    last_year = df[df["Date"] >= (pd.Timestamp.now() - pd.DateOffset(years=1))]
-    st.metric("Trailing 12M Dividend", f"${round(last_year['Dividend'].sum(), 2)}")
+    st.metric(
+        "Trailing 12-Month Dividend",
+        f"${round(total, 2)}"
+    )
+
 
 
 def render_stock_screener():
