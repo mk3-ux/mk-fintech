@@ -2017,3 +2017,147 @@ def run_app():
 
     with tabs[4]:
         render_demo_tab()
+# ============================================================
+# GLOBAL APP MODE
+# ============================================================
+
+if "app_mode" not in st.session_state:
+    st.session_state.app_mode = "marketing"
+
+
+# ============================================================
+# TOP NAV BAR (ALWAYS VISIBLE)
+# ============================================================
+
+def render_top_nav():
+    st.markdown(
+        """
+        <style>
+        .top-nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.8rem 2rem;
+            border-bottom: 1px solid #e5e7eb;
+            margin-bottom: 1.5rem;
+        }
+        .nav-left {
+            font-weight: 800;
+            font-size: 1.1rem;
+        }
+        .nav-right button {
+            background: none;
+            border: none;
+            font-weight: 600;
+            margin-left: 1.2rem;
+            cursor: pointer;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    cols = st.columns([3, 5])
+
+    with cols[0]:
+        st.markdown("### 💎 Katta Wealth Insights")
+
+    with cols[1]:
+        nav_cols = st.columns(5)
+        labels = ["About Us", "Features", "How It Works", "Benefits", "Demo"]
+
+        for i, label in enumerate(labels):
+            if nav_cols[i].button(label, use_container_width=True):
+                if label == "Demo":
+                    st.session_state.app_mode = "demo"
+                else:
+                    st.session_state.app_mode = label.lower().replace(" ", "_")
+                st.rerun()
+
+
+# ============================================================
+# MARKETING PAGES
+# ============================================================
+
+def render_about():
+    page_header("About Us", "Built for long-term thinking", "🏛️")
+    st.write(
+        """
+        Katta Wealth Insights is designed to help investors reason clearly
+        about portfolios, income, risk, and long-term outcomes.
+
+        We focus on **probabilities, transparency, and education** —
+        not hype or predictions.
+        """
+    )
+
+
+def render_features():
+    page_header("Features", "AI-native wealth intelligence", "✨")
+    st.markdown("""
+    - Stock & ETF portfolio tracking  
+    - ETF look-through exposure  
+    - Dividend income analytics  
+    - Monte Carlo goal probability  
+    - Risk & drawdown monitoring  
+    - AI explanations & education mode  
+    """)
+
+
+def render_how_it_works():
+    page_header("How It Works", "From data to insight", "⚙️")
+    st.markdown("""
+    1. Upload your portfolio  
+    2. Analyze exposure, income, and risk  
+    3. Simulate future outcomes  
+    4. Ask AI for explanations  
+    """)
+
+
+def render_benefits():
+    page_header("Benefits", "Why investors use KWI", "🎯")
+    st.markdown("""
+    - Clarity over complexity  
+    - Probabilities instead of guesses  
+    - AI explanations grounded in your data  
+    - Built for investors, students, and families  
+    """)
+
+
+# ============================================================
+# FINAL ENTRYPOINT (THIS IS THE KEY)
+# ============================================================
+
+def run_app():
+    # 🔝 Always render top navigation
+    render_top_nav()
+
+    # 🟦 MARKETING MODE (NO SIDEBAR, NO APP)
+    if st.session_state.app_mode != "demo":
+        if st.session_state.app_mode == "about_us":
+            render_about()
+        elif st.session_state.app_mode == "features":
+            render_features()
+        elif st.session_state.app_mode == "how_it_works":
+            render_how_it_works()
+        elif st.session_state.app_mode == "benefits":
+            render_benefits()
+        else:
+            render_about()  # default landing
+        return
+
+    # 🚀 DEMO MODE — FULL APP ENABLED
+    if not logged_in():
+        auth_ui()
+        return
+
+    page = sidebar_nav()
+    main_router(page)
+
+
+# ============================================================
+# EXECUTION GUARD
+# ============================================================
+
+if __name__ == "__main__":
+    run_app()
