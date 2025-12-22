@@ -781,27 +781,6 @@ def main():
     page = sidebar_nav()
 
     # -------- FREE --------
-    if page == "Market Scenario":
-        render_market_scenario()
-
-    elif page == "Portfolio Analyzer":
-        render_portfolio_analyzer()
-
-    elif page == "Live Stocks":
-        render_live_stocks()
-
-    elif page == "Stock Research":
-        render_stock_research()
-
-    # -------- PRO --------
-    elif is_pro() and page == "Portfolio Tracker":
-        render_portfolio_tracker()
-
-    elif is_pro() and page == "Dividend Tracker":
-        render_dividend_tracker()
-
-    elif is_pro() and page == "Stock Screener":
-        render_stock_screener()
 
 
 if __name__ == "__main__":
