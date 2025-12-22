@@ -2161,3 +2161,211 @@ def run_app():
 
 if __name__ == "__main__":
     run_app()
+# ============================================================
+# GLOBAL MODE & PAYMENT STATE (AUTHORITATIVE)
+# ============================================================
+
+if "app_mode" not in st.session_state:
+    st.session_state.app_mode = "marketing"  # marketing | demo
+
+if "has_paid" not in st.session_state:
+    st.session_state.has_paid = False
+def render_payment_page():
+    page_header(
+        "Subscription Required",
+        "Access the full Katta Wealth Insights demo",
+        icon="💳",
+    )
+
+    st.markdown("""
+    ### Plan
+    **Katta Wealth Insights — Full Access**
+    - Portfolio analytics
+    - ETF look-through
+    - Dividend income
+    - Monte Carlo simulations
+    - AI explanations
+
+    **Price:** $19 / month
+    """)
+
+    st.info("This is a demo payment flow. Stripe can be plugged in here.")
+
+    if st.button("Pay & Continue", use_container_width=True):
+        st.session_state.has_paid = True
+        st.success("Payment successful (demo).")
+        st.rerun()
+def render_top_nav():
+    st.markdown(
+        """
+        <style>
+        .topnav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.8rem 2rem;
+            border-bottom: 1px solid #1f2937;
+            margin-bottom: 1.5rem;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    left, right = st.columns([3, 7])
+
+    with left:
+        st.markdown("### 💎 Katta Wealth Insights")
+
+    with right:
+        cols = st.columns(5)
+        labels = ["About Us", "Features", "How It Works", "Benefits", "Demo"]
+
+        for i, label in enumerate(labels):
+            if cols[i].button(label, use_container_width=True):
+                if label == "Demo":
+                    st.session_state.app_mode = "demo"
+                else:
+                    st.session_state.app_mode = label.lower().replace(" ", "_")
+                st.rerun()
+def render_about():
+    page_header("About Us", "Built for long-term thinking", "🏛️")
+    st.write("""
+    Katta Wealth Insights helps investors reason clearly about
+    portfolios, income, risk, and long-term outcomes.
+
+    We focus on **probabilities, transparency, and education** —
+    not hype or predictions.
+    """)
+
+
+def render_features():
+    page_header("Features", "AI-native wealth intelligence", "✨")
+    st.markdown("""
+    - Stock & ETF portfolio tracking  
+    - ETF look-through exposure  
+    - Dividend income analytics  
+    - Monte Carlo goal probability  
+    - Risk & drawdown monitoring  
+    - AI-powered explanations  
+    """)
+
+
+def render_how_it_works():
+    page_header("How It Works", "From data to insight", "⚙️")
+    st.markdown("""
+    1. Upload your portfolio  
+    2. Analyze exposure, income, and risk  
+    3. Simulate future outcomes  
+    4. Ask AI for explanations  
+    """)
+
+
+def render_benefits():
+    page_header("Benefits", "Why investors use KWI", "🎯")
+    st.markdown("""
+    - Clarity over complexity  
+    - Probabilities instead of guesses  
+    - AI explanations grounded in your data  
+    - Built for investors, students, and families  
+    """)
+def sidebar_nav():
+    with st.sidebar:
+        st.markdown("## 💎 Katta Wealth")
+
+        if logged_in():
+            st.caption(f"👤 {st.session_state.current_user}")
+        else:
+            st.caption("Not logged in")
+
+        divider()
+        st.markdown("### 📍 Explore")
+
+        page = st.radio(
+            "",
+            [
+                "Portfolio Overview",
+                "Portfolio Insights",
+                "Goal Probability",
+                "Portfolio Health",
+                "AI Rebalancing",
+                "Income Forecast",
+                "Teen Explainer",
+                "AI Chatbot",
+                "Risk Alerts",
+                "Tax Optimization",
+                "Performance",
+                "Exports",
+            ],
+        )
+
+        divider()
+
+        if st.button("🚪 Log out", use_container_width=True):
+            st.session_state.current_user = None
+            st.session_state.has_paid = False
+            cookie_clear_user()
+            st.rerun()
+
+        return page
+def main_router(page: str):
+    if page == "Portfolio Overview":
+        render_portfolio_overview_with_income()
+    elif page == "Portfolio Insights":
+        render_portfolio_insights()
+    elif page == "Goal Probability":
+        render_goal_probability()
+    elif page == "Portfolio Health":
+        render_portfolio_health_ai()
+    elif page == "AI Rebalancing":
+        render_ai_rebalancing()
+    elif page == "Income Forecast":
+        render_income_forecast_ai()
+    elif page == "Teen Explainer":
+        render_teen_explainer_ai()
+    elif page == "AI Chatbot":
+        render_ai_chatbot()
+    elif page == "Risk Alerts":
+        render_risk_alerts()
+    elif page == "Tax Optimization":
+        render_tax_optimization()
+    elif page == "Performance":
+        render_performance_benchmark()
+    elif page == "Exports":
+        render_exports()
+def run_app():
+    render_top_nav()
+
+    # ============================
+    # MARKETING MODE
+    # ============================
+    if st.session_state.app_mode != "demo":
+        if st.session_state.app_mode == "about_us":
+            render_about()
+        elif st.session_state.app_mode == "features":
+            render_features()
+        elif st.session_state.app_mode == "how_it_works":
+            render_how_it_works()
+        elif st.session_state.app_mode == "benefits":
+            render_benefits()
+        else:
+            render_about()
+        return
+
+    # ============================
+    # DEMO MODE
+    # ============================
+    if not logged_in():
+        auth_ui()
+        return
+
+    if not st.session_state.has_paid:
+        render_payment_page()
+        return
+
+    page = sidebar_nav()
+    main_router(page)
+
+
+if __name__ == "__main__":
+    run_app()
