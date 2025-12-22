@@ -1868,3 +1868,152 @@ def run_app():
 
     page = sidebar_nav()
     main_router(page)
+# ============================================================
+# PART 15 / 15 — WEBSITE TABS & DEMO GATING
+# ============================================================
+
+def render_home_tab():
+    page_header(
+        "Katta Wealth Insights",
+        "AI-native research and planning workspace for modern investors",
+        icon="💎",
+    )
+
+    st.markdown(
+        """
+        Katta Wealth Insights is an **AI-powered wealth intelligence platform**
+        designed to help investors understand portfolios, income, risk,
+        and long-term outcomes — all in one unified workspace.
+        """
+    )
+
+    metric_grid([
+        ("AI Insights", "Context-Aware", None),
+        ("Portfolio Types", "Stocks & ETFs", None),
+        ("Planning Horizon", "Probabilistic", None),
+    ])
+
+
+def render_about_tab():
+    page_header(
+        "About Us",
+        "Built for clarity, discipline, and long-term thinking",
+        icon="🏛️",
+    )
+
+    st.markdown(
+        """
+        **Katta Wealth Insights** was created to bridge the gap between
+        raw financial data and real investor understanding.
+
+        We believe:
+        - Markets are uncertain — probabilities matter
+        - Investors need explanations, not noise
+        - AI should clarify, not confuse
+
+        Our platform blends **data, modeling, and AI** to help investors
+        reason about decisions with confidence.
+        """
+    )
+
+
+def render_features_tab():
+    page_header(
+        "Features",
+        "A complete AI-native wealth research stack",
+        icon="✨",
+    )
+
+    st.markdown(
+        """
+        **Portfolio Intelligence**
+        - Stock & ETF tracking
+        - Look-through exposure
+        - Dividend income analysis
+
+        **Planning & Risk**
+        - Monte Carlo goal probability
+        - Drawdown & volatility monitoring
+        - Benchmark comparisons
+
+        **AI Research**
+        - Portfolio explanations
+        - Teen-friendly education mode
+        - Context-aware AI chatbot
+
+        **Enterprise-Grade**
+        - Secure authentication
+        - Audit-ready exports
+        - Scalable architecture
+        """
+    )
+
+
+def render_how_it_works_tab():
+    page_header(
+        "How It Works",
+        "From data to insight in minutes",
+        icon="⚙️",
+    )
+
+    st.markdown(
+        """
+        **1. Upload Your Portfolio**
+        Upload a simple CSV with tickers and shares.
+
+        **2. Analyze Automatically**
+        Katta Wealth Insights calculates value, income,
+        exposure, and risk in real time.
+
+        **3. Simulate Outcomes**
+        Run Monte Carlo simulations to understand
+        the probability of reaching your goals.
+
+        **4. Ask AI**
+        Get clear explanations — not advice —
+        grounded in your actual data.
+        """
+    )
+def render_demo_tab():
+    page_header(
+        "Live Demo",
+        "Explore the full Katta Wealth Insights platform",
+        icon="🚀",
+    )
+
+    st.info(
+        "All features are available inside the demo environment. "
+        "Sign in to explore portfolios, simulations, and AI insights."
+    )
+
+    # 🔐 AUTH + FULL APP
+    if not logged_in():
+        auth_ui()
+        return
+
+    page = sidebar_nav()
+    main_router(page)
+def run_app():
+    # Top-level website tabs
+    tabs = st.tabs([
+        "Home",
+        "About Us",
+        "Features",
+        "How It Works",
+        "Demo",
+    ])
+
+    with tabs[0]:
+        render_home_tab()
+
+    with tabs[1]:
+        render_about_tab()
+
+    with tabs[2]:
+        render_features_tab()
+
+    with tabs[3]:
+        render_how_it_works_tab()
+
+    with tabs[4]:
+        render_demo_tab()
