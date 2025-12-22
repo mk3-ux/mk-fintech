@@ -810,19 +810,23 @@ def render_portfolio_tracker():
             f"${round(holdings.loc['TOTAL', 'PnL'], 2)}",
         )
 
-def render_dividend_tracker():
+ddef render_dividend_tracker():
     st.header("Dividend Tracker")
 
     ticker = st.text_input("Dividend Ticker", "MSFT").upper().strip()
-
     df = get_dividend_history(ticker)
 
     if df.empty:
         st.info("No dividend data available.")
         return
 
-    # ✅ SAFE: Date is already datetime here
-    cutoff = pd.Timestamp.now() - pd.DateOffset(years=1)
+    # ✅ Ensure Date is datetime (naive)
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+    df = df.dropna(subset=["Date"])
+
+    # ✅ FIX: make cutoff timezone-naive
+    cutoff = pd.Timestamp.now().tz_localize(None) - pd.DateOffset(years=1)
+
     last_year = df[df["Date"] >= cutoff]
 
     st.subheader("Recent Dividends")
@@ -834,7 +838,6 @@ def render_dividend_tracker():
         "Trailing 12-Month Dividend",
         f"${round(total, 2)}"
     )
-
 
 
 def render_stock_screener():
