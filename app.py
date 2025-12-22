@@ -1516,3 +1516,166 @@ def main_router(page: str) -> None:
         _old_main_router(page)
 
 # ===== END PART 9 / 9 =====
+# ============================================================
+# PART 10 / 13 — RISK ALERTS & DRAWDOWN MONITORING
+# ============================================================
+
+def compute_drawdown(series: pd.Series) -> float:
+    running_max = series.cummax()
+    drawdown = (series - running_max) / running_max
+    return round(drawdown.min() * 100, 2)
+
+
+def render_risk_alerts():
+    page_header(
+        "Risk Alerts",
+        "Monitor volatility and drawdown risk",
+        icon="🚨",
+    )
+
+    portfolio = st.session_state.get("portfolio")
+    if portfolio is None or portfolio.empty:
+        st.info("Upload a portfolio first.")
+        return
+
+    returns = []
+
+    for _, row in portfolio.drop(index="TOTAL", errors="ignore").iterrows():
+        try:
+            prices = yf.Ticker(row["Ticker"]).history(period="1y")["Close"]
+            returns.append(prices)
+        except Exception:
+            continue
+
+    if not returns:
+        st.info("Not enough data for risk analysis.")
+        return
+
+    combined = pd.concat(returns, axis=1).mean(axis=1)
+    dd = compute_drawdown(combined)
+
+    metric_grid([
+        ("Max Drawdown (1Y)", f"{dd}%", None),
+        ("Risk Level", "High" if dd < -20 else "Moderate", None),
+    ])
+
+    if is_pro():
+        ai_block(
+            "Risk Explanation",
+            f"Explain what a {dd}% drawdown means for a long-term investor.\n\n"
+            + safe_json(build_ai_context()),
+        )
+# ============================================================
+# PART 11 / 13 — TAX OPTIMIZATION (EDUCATIONAL)
+# ============================================================
+
+def estimate_capital_gains_tax(portfolio: pd.DataFrame, tax_rate: float) -> float:
+    pnl = portfolio.loc["TOTAL", "PnL"]
+    return round(max(pnl, 0) * tax_rate, 2)
+
+
+def render_tax_optimization():
+    page_header(
+        "Tax Optimization",
+        "Understand potential capital gains impact",
+        icon="🧾",
+    )
+
+    portfolio = st.session_state.get("portfolio")
+    if portfolio is None or portfolio.empty:
+        st.info("Upload a portfolio first.")
+        return
+
+    tax_rate = st.slider("Estimated Capital Gains Tax Rate", 0.0, 0.4, 0.15)
+
+    tax = estimate_capital_gains_tax(portfolio, tax_rate)
+
+    metric_grid([
+        ("Unrealized Gains", f"${round(portfolio.loc['TOTAL', 'PnL'], 2):,}", None),
+        ("Estimated Tax", f"${tax:,}", None),
+    ])
+
+    if is_pro():
+        ai_block(
+            "Tax Awareness",
+            "Explain tax-efficient investing strategies at a high level "
+            "without giving advice.\n\n"
+            + safe_json(build_ai_context()),
+        )
+# ============================================================
+# PART 12 / 13 — PERFORMANCE & BENCHMARKING
+# ============================================================
+
+def render_performance_benchmark():
+    page_header(
+        "Performance",
+        "Compare your portfolio vs the market",
+        icon="📈",
+    )
+
+    portfolio = st.session_state.get("portfolio")
+    if portfolio is None or portfolio.empty:
+        st.info("Upload a portfolio first.")
+        return
+
+    prices = []
+
+    for _, row in portfolio.drop(index="TOTAL", errors="ignore").iterrows():
+        try:
+            p = yf.Ticker(row["Ticker"]).history(period="1y")["Close"]
+            prices.append(p)
+        except Exception:
+            continue
+
+    if not prices:
+        st.info("Not enough data.")
+        return
+
+    portfolio_series = pd.concat(prices, axis=1).mean(axis=1)
+    benchmark = yf.Ticker("SPY").history(period="1y")["Close"]
+
+    df = pd.DataFrame({
+        "Portfolio": (portfolio_series / portfolio_series.iloc[0]) - 1,
+        "S&P 500 (SPY)": (benchmark / benchmark.iloc[0]) - 1,
+    })
+
+    st.line_chart(df)
+# ============================================================
+# PART 13 / 13 — EXPORTS & REPORTING
+# ============================================================
+
+def render_exports():
+    page_header(
+        "Exports & Reports",
+        "Download portfolio data and summaries",
+        icon="📤",
+    )
+
+    portfolio = st.session_state.get("portfolio")
+    meta = st.session_state.get("portfolio_meta", {})
+
+    if portfolio is None or portfolio.empty:
+        st.info("Upload a portfolio first.")
+        return
+
+    st.download_button(
+        "⬇️ Download Portfolio CSV",
+        portfolio.to_csv().encode("utf-8"),
+        "portfolio_snapshot.csv",
+        "text/csv",
+    )
+
+    st.download_button(
+        "⬇️ Download Portfolio JSON",
+        json.dumps(
+            {
+                "portfolio": portfolio.to_dict(),
+                "meta": meta,
+            },
+            indent=2,
+        ).encode("utf-8"),
+        "portfolio_snapshot.json",
+        "application/json",
+    )
+
+    st.success("Exports are advisor- and audit-ready.")
