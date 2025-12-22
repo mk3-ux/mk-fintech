@@ -63,13 +63,12 @@ st.set_page_config(
 # ============================================================
 # DIVIDEND DATA HELPERS (REQUIRED)
 # ============================================================
+# ============================================================
+# DIVIDEND DATA HELPERS — FIXED
+# ============================================================
 
 @st.cache_data(ttl=3600)
 def get_dividend_history(ticker: str) -> pd.DataFrame:
-    """
-    Fetch dividend history using yfinance.
-    Safe fallback if unavailable.
-    """
     if yf is None:
         return pd.DataFrame()
 
@@ -81,23 +80,26 @@ def get_dividend_history(ticker: str) -> pd.DataFrame:
 
         df = divs.reset_index()
         df.columns = ["Date", "Dividend"]
-        return df
+
+        # ✅ FIX: force datetime
+        df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+
+        return df.dropna(subset=["Date"])
 
     except Exception:
         return pd.DataFrame()
 
 
-def annual_dividend(div_df: pd.DataFrame) -> float:
-    """
-    Calculate trailing 12-month dividend.
-    """
-    if div_df.empty:
+def annual_dividend(df: pd.DataFrame) -> float:
+    if df.empty:
         return 0.0
 
-    one_year_ago = pd.Timestamp.now() - pd.DateOffset(years=1)
-    recent = div_df[div_df["Date"] >= one_year_ago]
+    # ✅ FIX: use timezone-safe now
+    cutoff = pd.Timestamp.now(tz=None) - pd.DateOffset(years=1)
 
-    return round(float(recent["Dividend"].sum()), 2)
+    last_year = df[df["Date"] >= cutoff]
+
+    return round(float(last_year["Dividend"].sum()), 2)
 
 def init_session() -> None:
     defaults = {
