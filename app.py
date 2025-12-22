@@ -1,32 +1,67 @@
 # ============================================================
-# KATTA WEALTH INSIGHTS — FULL SINGLE-FILE APP
-# PART 1 / 8 — CORE SETUP, CONFIG, SESSION, UI FOUNDATION
+# KATTA WEALTH INSIGHTS — APP ENTRYPOINT
+# FILE 1 / 9 — app.py
+# ============================================================
+
+from __future__ import annotations
+
+import streamlit as st
+
+# Core imports
+from core.session import init_session
+from core.nav import render_top_nav
+from core.routing import route_app
+
+# ============================================================
+# STREAMLIT CONFIG (ONLY PLACE THIS EXISTS)
+# ============================================================
+
+st.set_page_config(
+    page_title="Katta Wealth Insights",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
+
+# ============================================================
+# APP BOOTSTRAP
+# ============================================================
+
+def run_app() -> None:
+    """
+    Single, authoritative entrypoint.
+    No widgets should be defined here.
+    """
+
+    # Initialize session state once
+    init_session()
+
+    # Always render top navigation
+    render_top_nav()
+
+    # Route application based on mode (marketing vs demo)
+    route_app()
+
+
+# ============================================================
+# EXECUTION GUARD (ONLY ONE IN ENTIRE CODEBASE)
+# ============================================================
+
+if __name__ == "__main__":
+    run_app()
+# ============================================================
+# KATTA WEALTH INSIGHTS
+# FILE 2 / 9 — core/session.py
 # ============================================================
 
 from __future__ import annotations
 
 import os
-import json
-import uuid
-import hashlib
 import sqlite3
+import hashlib
 import datetime as dt
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Optional, Dict, Any
 
-import numpy as np
-import pandas as pd
 import streamlit as st
-
-# Optional dependencies (safe fallbacks)
-try:
-    import yfinance as yf
-except Exception:
-    yf = None
-
-try:
-    from groq import Groq
-except Exception:
-    Groq = None
 
 try:
     from streamlit_cookies_manager import EncryptedCookieManager
@@ -35,15 +70,8 @@ except Exception:
 
 
 # ============================================================
-# APP CONFIG
+# GLOBAL CONSTANTS
 # ============================================================
-
-APP_NAME = "Katta Wealth Insights"
-APP_VERSION = "1.4.0"
-
-DEV_MODE = False
-MODEL_NAME = "llama-3.1-8b-instant"
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 
 USE_SQLITE = True
 SQLITE_PATH = "kwi_app.db"
@@ -51,86 +79,48 @@ SQLITE_PATH = "kwi_app.db"
 USE_COOKIES = True
 COOKIE_PASSWORD = os.getenv("KWI_COOKIE_PASSWORD", "change-this-secret")
 
-st.set_page_config(
-    page_title=APP_NAME,
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+# Payment (stub — real Stripe later)
+PAID_PLAN_NAME = "Pro"
+PAID_PRICE_MONTHLY = 24
 
 
 # ============================================================
-# 🎨 GLOBAL UI / AESTHETIC HELPERS (STREAMLIT-SAFE)
-# ============================================================
-
-def page_header(title: str, subtitle: str | None = None, icon: str = ""):
-    st.markdown(
-        f"""
-        <div style="padding: 0.5rem 0 1.2rem 0;">
-            <h2 style="margin-bottom: 0.2rem;">{icon} {title}</h2>
-            <p style="color: #6b7280; margin-top: 0;">{subtitle or ""}</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def section(title: str, subtitle: str | None = None):
-    st.markdown(f"### {title}")
-    if subtitle:
-        st.caption(subtitle)
-    st.markdown("---")
-
-
-def divider():
-    st.markdown(
-        "<hr style='margin: 1.5rem 0; border-color: #e5e7eb;'>",
-        unsafe_allow_html=True,
-    )
-
-
-def spacer(lines: int = 1):
-    for _ in range(lines):
-        st.write("")
-
-
-def card_metric(label: str, value: Any, delta: Any = None):
-    with st.container(border=True):
-        st.metric(label, value, delta)
-
-
-def metric_grid(metrics: List[Tuple[str, str, Optional[str]]]):
-    cols = st.columns(len(metrics))
-    for col, (label, value, delta) in zip(cols, metrics):
-        with col:
-            card_metric(label, value, delta)
-
-
-# ============================================================
-# SESSION STATE
+# SESSION INITIALIZATION (AUTHORITATIVE)
 # ============================================================
 
 def init_session() -> None:
-    defaults = {
-        "current_user": None,
-        "tier": "Free",
-        "ai_uses": 0,
+    """
+    Initialize ALL session keys exactly once.
+    This function is idempotent and safe.
+    """
 
-        # Canonical stock-based portfolio
+    defaults = {
+        # App mode
+        "app_mode": "marketing",  # marketing | demo
+
+        # Auth
+        "current_user": None,
+        "is_paid": False,
+
+        # Portfolio state
         "portfolio_raw": None,
         "portfolio": None,
         "portfolio_meta": {},
 
+        # AI
+        "chat_history": [],
+
+        # Alerts / debug
         "alerts": [],
         "debug": False,
     }
+
     for k, v in defaults.items():
         st.session_state.setdefault(k, v)
 
-init_session()
-
 
 # ============================================================
-# CORE UTILITIES
+# TIME + HASH HELPERS
 # ============================================================
 
 def now_iso() -> str:
@@ -145,33 +135,8 @@ def hash_pw(password: str) -> str:
     return sha256("kwi_salt_" + password)
 
 
-def logged_in() -> bool:
-    return st.session_state.current_user is not None
-
-
-def push_alert(msg: str) -> None:
-    st.session_state.alerts.append(msg)
-
-
-def flush_alerts() -> None:
-    for msg in st.session_state.alerts[-5:]:
-        st.info(msg)
-    st.session_state.alerts.clear()
-
-
-def safe_json(obj: Any) -> str:
-    try:
-        return json.dumps(obj, indent=2, default=str)
-    except Exception:
-        return str(obj)
-
-# ===== END PART 1 / 8 =====
 # ============================================================
-# PART 2 / 8 — COOKIES, SQLITE, AUTH, TIER LOGIC
-# ============================================================
-
-# ============================================================
-# COOKIES (OPTIONAL, SAFE FALLBACK)
+# COOKIE MANAGER
 # ============================================================
 
 cookies = None
@@ -180,11 +145,13 @@ def cookies_ready() -> bool:
     global cookies
     if not USE_COOKIES or EncryptedCookieManager is None:
         return False
+
     cookies = EncryptedCookieManager(
         prefix="kwi_",
-        password=COOKIE_PASSWORD
+        password=COOKIE_PASSWORD,
     )
     return cookies.ready()
+
 
 _COOKIES_OK = cookies_ready()
 
@@ -201,25 +168,19 @@ def cookie_get_user() -> Optional[str]:
 def cookie_set_user(email: str) -> None:
     if not _COOKIES_OK:
         return
-    try:
-        cookies["user"] = email
-        cookies.save()
-    except Exception:
-        pass
+    cookies["user"] = email
+    cookies.save()
 
 
 def cookie_clear_user() -> None:
     if not _COOKIES_OK:
         return
-    try:
-        cookies["user"] = ""
-        cookies.save()
-    except Exception:
-        pass
+    cookies["user"] = ""
+    cookies.save()
 
 
 # ============================================================
-# SQLITE — DATABASE SETUP
+# SQLITE DATABASE
 # ============================================================
 
 def db_connect() -> sqlite3.Connection:
@@ -229,79 +190,56 @@ def db_connect() -> sqlite3.Connection:
     return conn
 
 
-def db_init() -> bool:
+def db_init() -> None:
     if not USE_SQLITE:
-        return False
-    try:
-        conn = db_connect()
+        return
 
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            email TEXT PRIMARY KEY,
-            pw_hash TEXT NOT NULL,
-            tier TEXT NOT NULL DEFAULT 'Free',
-            created_at TEXT NOT NULL
-        );
-        """)
+    conn = db_connect()
 
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS usage (
-            email TEXT PRIMARY KEY,
-            ai_uses INTEGER NOT NULL DEFAULT 0,
-            updated_at TEXT NOT NULL
-        );
-        """)
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        email TEXT PRIMARY KEY,
+        pw_hash TEXT NOT NULL,
+        is_paid INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL
+    );
+    """)
 
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS artifacts (
-            id TEXT PRIMARY KEY,
-            email TEXT NOT NULL,
-            kind TEXT NOT NULL,
-            payload_json TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        );
-        """)
-
-        conn.commit()
-        conn.close()
-        return True
-    except Exception:
-        return False
+    conn.commit()
+    conn.close()
 
 
-DB_OK = db_init()
+db_init()
 
 
 # ============================================================
-# DATABASE HELPERS
+# USER HELPERS
 # ============================================================
 
 def db_get_user(email: str) -> Optional[Dict[str, Any]]:
-    if not DB_OK:
-        return None
     conn = db_connect()
     row = conn.execute(
-        "SELECT email, pw_hash, tier FROM users WHERE email=?",
+        "SELECT email, pw_hash, is_paid FROM users WHERE email=?",
         (email,),
     ).fetchone()
     conn.close()
+
     if not row:
         return None
-    return {"email": row[0], "pw": row[1], "tier": row[2]}
+
+    return {
+        "email": row[0],
+        "pw": row[1],
+        "is_paid": bool(row[2]),
+    }
 
 
 def db_create_user(email: str, pw_hash: str) -> bool:
-    if not DB_OK:
-        return False
     try:
         conn = db_connect()
         conn.execute(
             "INSERT INTO users VALUES (?,?,?,?)",
-            (email, pw_hash, "Free", now_iso())
-        )
-        conn.execute(
-            "INSERT INTO usage VALUES (?,?,?)",
-            (email, 0, now_iso())
+            (email, pw_hash, 0, now_iso()),
         )
         conn.commit()
         conn.close()
@@ -310,164 +248,482 @@ def db_create_user(email: str, pw_hash: str) -> bool:
         return False
 
 
-def db_get_usage(email: str) -> int:
-    if not DB_OK:
-        return st.session_state.ai_uses
-    conn = db_connect()
-    row = conn.execute(
-        "SELECT ai_uses FROM usage WHERE email=?",
-        (email,),
-    ).fetchone()
-    conn.close()
-    return int(row[0]) if row else 0
-
-
-def db_set_usage(email: str, uses: int) -> None:
-    if not DB_OK:
-        st.session_state.ai_uses = uses
-        return
+def db_set_paid(email: str, paid: bool) -> None:
     conn = db_connect()
     conn.execute(
-        "INSERT OR REPLACE INTO usage VALUES (?,?,?)",
-        (email, uses, now_iso())
+        "UPDATE users SET is_paid=? WHERE email=?",
+        (1 if paid else 0, email),
     )
     conn.commit()
     conn.close()
 
 
-def db_set_tier(email: str, tier: str) -> None:
-    if not DB_OK:
+# ============================================================
+# AUTH STATE HELPERS
+# ============================================================
+
+def logged_in() -> bool:
+    return st.session_state.current_user is not None
+
+
+def is_paid_user() -> bool:
+    return bool(st.session_state.get("is_paid", False))
+
+
+def login_user(email: str, remember: bool = True) -> None:
+    user = db_get_user(email)
+    if not user:
         return
-    conn = db_connect()
-    conn.execute(
-        "UPDATE users SET tier=? WHERE email=?",
-        (tier, email)
-    )
-    conn.commit()
-    conn.close()
+
+    st.session_state.current_user = email
+    st.session_state.is_paid = user["is_paid"]
+
+    if remember:
+        cookie_set_user(email)
 
 
-def upgrade_current_user_to_pro():
-    email = st.session_state.current_user
-    if not email:
-        return
+def logout_user() -> None:
+    st.session_state.current_user = None
+    st.session_state.is_paid = False
+    cookie_clear_user()
 
-    if DB_OK:
-        db_set_tier(email, "Pro")
-
-    st.session_state.tier = "Pro"
-
-
-# ============================================================
-# TIER LOGIC (AUTHORITATIVE)
-# ============================================================
-
-def effective_tier() -> str:
-    if DEV_MODE:
-        return "Pro"
-    if not logged_in():
-        return "Free"
-    user = db_get_user(st.session_state.current_user)
-    return user["tier"] if user else "Free"
-
-
-def is_pro() -> bool:
-    return effective_tier() == "Pro"
-
-
-# ============================================================
-# AUTO LOGIN (COOKIE)
-# ============================================================
 
 def auto_login() -> None:
     if logged_in():
         return
+
     saved = cookie_get_user()
     if not saved:
         return
+
     user = db_get_user(saved)
     if user:
         st.session_state.current_user = saved
-        st.session_state.tier = user["tier"]
-        st.session_state.ai_uses = db_get_usage(saved)
+        st.session_state.is_paid = user["is_paid"]
 
 
+# Run auto-login once per session
 auto_login()
 
 
 # ============================================================
-# AUTH UI (LOGIN / SIGNUP)
+# PAYMENT STUB (NO STRIPE YET)
 # ============================================================
 
-def auth_ui() -> None:
-    page_header(
-        APP_NAME,
-        f"Version {APP_VERSION} — Secure login",
-        icon="🔐"
+def mark_user_as_paid() -> None:
+    """
+    Demo-only payment unlock.
+    """
+    email = st.session_state.current_user
+    if not email:
+        return
+
+    db_set_paid(email, True)
+    st.session_state.is_paid = True
+# ============================================================
+# KATTA WEALTH INSIGHTS
+# FILE 3 / 9 — core/nav.py
+# ============================================================
+
+from __future__ import annotations
+
+import streamlit as st
+
+
+# ============================================================
+# TOP NAVIGATION BAR
+# ============================================================
+
+def render_top_nav() -> None:
+    """
+    Always-visible top navigation bar.
+    This is the ONLY place where app_mode is changed.
+    """
+
+    st.markdown(
+        """
+        <style>
+        .kwi-top-nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem 2rem;
+            border-bottom: 1px solid #1f2933;
+            background-color: #0b0f19;
+            margin-bottom: 1.5rem;
+        }
+
+        .kwi-brand {
+            font-weight: 800;
+            font-size: 1.15rem;
+            color: #e5e7eb;
+        }
+
+        .kwi-nav-buttons button {
+            background: none;
+            border: 1px solid #374151;
+            color: #e5e7eb;
+            padding: 0.35rem 0.9rem;
+            border-radius: 0.5rem;
+            font-weight: 600;
+            margin-left: 0.6rem;
+            cursor: pointer;
+        }
+
+        .kwi-nav-buttons button:hover {
+            border-color: #6366f1;
+            color: #c7d2fe;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
     )
 
-    login_tab, signup_tab = st.tabs(["Log In", "Sign Up"])
+    left, right = st.columns([3, 7])
 
-    with login_tab:
-        email = st.text_input("Email", key="login_email")
-        pw = st.text_input("Password", type="password", key="login_pw")
-        remember = st.checkbox("Remember me", value=True)
+    # --------------------------------------------------------
+    # BRAND
+    # --------------------------------------------------------
+    with left:
+        st.markdown(
+            "<div class='kwi-brand'>💎 Katta Wealth Insights</div>",
+            unsafe_allow_html=True,
+        )
 
-        if st.button("Log In", use_container_width=True):
-            if not email or not pw:
-                st.error("Missing email or password.")
-                return
+    # --------------------------------------------------------
+    # NAVIGATION BUTTONS
+    # --------------------------------------------------------
+    with right:
+        cols = st.columns(5)
 
-            user = db_get_user(email)
-            if user and user["pw"] == hash_pw(pw):
-                st.session_state.current_user = email
-                st.session_state.tier = user["tier"]
-                st.session_state.ai_uses = db_get_usage(email)
-                if remember:
-                    cookie_set_user(email)
+        labels = [
+            ("About Us", "about"),
+            ("Features", "features"),
+            ("How It Works", "how_it_works"),
+            ("Benefits", "benefits"),
+            ("Demo", "demo"),
+        ]
+
+        for i, (label, mode) in enumerate(labels):
+            if cols[i].button(label, key=f"top_nav_{mode}"):
+                st.session_state.app_mode = mode
                 st.rerun()
-            else:
-                st.error("Invalid credentials.")
-
-    with signup_tab:
-        email = st.text_input("New Email", key="signup_email")
-        pw = st.text_input("New Password", type="password", key="signup_pw")
-
-        if st.button("Create Account", use_container_width=True):
-            if not email or not pw:
-                st.error("Missing email or password.")
-                return
-
-            if db_create_user(email, hash_pw(pw)):
-                st.success("Account created. Please log in.")
-            else:
-                st.error("Account already exists.")
-
-# ===== END PART 2 / 8 =====
 # ============================================================
-# PART 3 / 8 — PORTFOLIO ENGINE + ETF LOOK-THROUGH
+# KATTA WEALTH INSIGHTS
+# FILE 4 / 9 — core/routing.py
 # ============================================================
 
+from __future__ import annotations
+
+import streamlit as st
+
+from core.session import (
+    logged_in,
+    is_paid_user,
+)
+
+# Marketing pages
+from ui.marketing import (
+    render_about,
+    render_features,
+    render_how_it_works,
+    render_benefits,
+)
+
+# Auth & payment UI
+from ui.auth import render_auth
+from ui.payment import render_payment
+
+# Demo sidebar + pages
+from ui.sidebar import sidebar_nav
+from ui.router import demo_router
+
+
 # ============================================================
-# CANONICAL PORTFOLIO MODEL (STOCK-BASED)
+# MAIN ROUTER (SINGLE SOURCE OF TRUTH)
 # ============================================================
 
-REQUIRED_PORTFOLIO_COLUMNS = ["Ticker", "Shares", "Cost_Basis"]
+def route_app() -> None:
+    """
+    Routes application based on st.session_state.app_mode.
+
+    MODES:
+    - about
+    - features
+    - how_it_works
+    - benefits
+    - demo
+    """
+
+    mode = st.session_state.get("app_mode", "about")
+
+    # ========================================================
+    # MARKETING MODE (NO SIDEBAR, NO APP UI)
+    # ========================================================
+
+    if mode != "demo":
+        if mode == "about":
+            render_about()
+        elif mode == "features":
+            render_features()
+        elif mode == "how_it_works":
+            render_how_it_works()
+        elif mode == "benefits":
+            render_benefits()
+        else:
+            render_about()
+
+        return  # 🔐 STOP — no sidebar, no demo widgets
+
+    # ========================================================
+    # DEMO MODE (FULL APP)
+    # ========================================================
+
+    # ---- Authentication gate ----
+    if not logged_in():
+        render_auth()
+        return
+
+    # ---- Payment gate ----
+    if not is_paid_user():
+        render_payment()
+        return
+
+    # ---- FULL APP ENABLED ----
+    page = sidebar_nav()
+    demo_router(page)
+# ============================================================
+# KATTA WEALTH INSIGHTS
+# FILE 5 / 9 — ui/sidebar.py
+# ============================================================
+
+from __future__ import annotations
+
+import streamlit as st
+
+from core.session import (
+    logout_user,
+)
+
+
+# ============================================================
+# DEMO SIDEBAR (ONLY ONE IN APP)
+# ============================================================
+
+def sidebar_nav() -> str:
+    """
+    Renders the demo sidebar and returns selected page.
+    This function MUST be called exactly once per run.
+    """
+
+    with st.sidebar:
+        st.markdown(
+            """
+            <style>
+            .kwi-sidebar-title {
+                font-weight: 800;
+                font-size: 1.05rem;
+                margin-bottom: 0.3rem;
+            }
+            .kwi-sidebar-section {
+                margin-top: 1.2rem;
+                font-weight: 700;
+                font-size: 0.85rem;
+                color: #6b7280;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        st.markdown("<div class='kwi-sidebar-title'>📂 Navigation</div>",
+                    unsafe_allow_html=True)
+
+        # ----------------------------------------------------
+        # PRIMARY NAVIGATION
+        # ----------------------------------------------------
+
+        pages = [
+            "Portfolio Overview",
+            "Portfolio Insights",
+            "Goal Probability",
+            "Portfolio Health",
+            "AI Rebalancing",
+            "Income Forecast",
+            "Teen Explainer",
+            "AI Chatbot",
+            "Risk Alerts",
+            "Tax Optimization",
+            "Performance",
+            "Exports",
+        ]
+
+        page = st.radio(
+            label="",
+            options=pages,
+            index=0,
+            key="sidebar_nav_radio_unique",  # 🔐 UNIQUE KEY
+        )
+
+        # ----------------------------------------------------
+        # ACCOUNT ACTIONS
+        # ----------------------------------------------------
+
+        st.markdown("<div class='kwi-sidebar-section'>Account</div>",
+                    unsafe_allow_html=True)
+
+        if st.button("🚪 Log out", key="sidebar_logout_btn"):
+            logout_user()
+            st.session_state.app_mode = "about"
+            st.rerun()
+
+        return page
+# ============================================================
+# KATTA WEALTH INSIGHTS
+# FILE 6 / 9 — ui/router.py
+# ============================================================
+
+from __future__ import annotations
+
+import streamlit as st
+
+# Portfolio & analytics
+from features.portfolio import (
+    render_portfolio_overview,
+    render_portfolio_insights,
+)
+
+# Goals & simulations
+from features.goals import (
+    render_goal_probability,
+)
+
+# AI features
+from features.ai import (
+    render_portfolio_health_ai,
+    render_ai_rebalancing,
+    render_income_forecast_ai,
+    render_teen_explainer_ai,
+    render_ai_chatbot,
+)
+
+# Risk, tax, performance, exports
+from features.risk import (
+    render_risk_alerts,
+    render_tax_optimization,
+    render_performance_benchmark,
+    render_exports,
+)
+
+
+# ============================================================
+# DEMO ROUTER
+# ============================================================
+
+def demo_router(page: str) -> None:
+    """
+    Routes sidebar page selection to feature renderers.
+    This function does not create widgets itself.
+    """
+
+    if page == "Portfolio Overview":
+        render_portfolio_overview()
+
+    elif page == "Portfolio Insights":
+        render_portfolio_insights()
+
+    elif page == "Goal Probability":
+        render_goal_probability()
+
+    elif page == "Portfolio Health":
+        render_portfolio_health_ai()
+
+    elif page == "AI Rebalancing":
+        render_ai_rebalancing()
+
+    elif page == "Income Forecast":
+        render_income_forecast_ai()
+
+    elif page == "Teen Explainer":
+        render_teen_explainer_ai()
+
+    elif page == "AI Chatbot":
+        render_ai_chatbot()
+
+    elif page == "Risk Alerts":
+        render_risk_alerts()
+
+    elif page == "Tax Optimization":
+        render_tax_optimization()
+
+    elif page == "Performance":
+        render_performance_benchmark()
+
+    elif page == "Exports":
+        render_exports()
+
+    else:
+        st.info("Select a feature from the sidebar.")
+# ============================================================
+# KATTA WEALTH INSIGHTS
+# FILE 7 / 9 — features/portfolio.py
+# ============================================================
+
+from __future__ import annotations
+
+import numpy as np
+import pandas as pd
+import streamlit as st
+
+try:
+    import yfinance as yf
+except Exception:
+    yf = None
+
+
+# ============================================================
+# UI HELPERS
+# ============================================================
+
+def page_header(title: str, subtitle: str | None = None, icon: str = ""):
+    st.markdown(
+        f"""
+        <div style="padding-bottom:1rem;">
+            <h2>{icon} {title}</h2>
+            <p style="color:#6b7280;">{subtitle or ""}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def divider():
+    st.markdown("---")
+
+
+# ============================================================
+# PORTFOLIO INPUT MODEL
+# ============================================================
+
+REQUIRED_COLUMNS = ["Ticker", "Shares", "Cost_Basis"]
+
 
 def portfolio_template_csv() -> bytes:
-    sample = pd.DataFrame({
-        "Ticker": ["AAPL", "MSFT", "NVDA", "VOO"],
-        "Shares": [10, 5, 3, 2],
-        "Cost_Basis": [150, 280, 400, 350],
-    })
-    return sample.to_csv(index=False).encode("utf-8")
+    df = pd.DataFrame(
+        {
+            "Ticker": ["AAPL", "MSFT", "NVDA", "VOO"],
+            "Shares": [10, 5, 3, 2],
+            "Cost_Basis": [150, 280, 400, 350],
+        }
+    )
+    return df.to_csv(index=False).encode("utf-8")
 
 
-def validate_portfolio_df(df: pd.DataFrame) -> Tuple[bool, str]:
+def validate_portfolio(df: pd.DataFrame):
     if df.empty:
         return False, "Portfolio is empty."
 
-    missing = [c for c in REQUIRED_PORTFOLIO_COLUMNS if c not in df.columns]
+    missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
     if missing:
         return False, f"Missing columns: {', '.join(missing)}"
 
@@ -478,65 +734,61 @@ def validate_portfolio_df(df: pd.DataFrame) -> Tuple[bool, str]:
         return False, "Shares and Cost_Basis must be numeric."
 
     if (df["Shares"] <= 0).any():
-        return False, "Shares must be greater than zero."
+        return False, "Shares must be positive."
 
     return True, "OK"
 
 
 # ============================================================
-# LIVE PRICE FETCH
+# LIVE MARKET DATA
 # ============================================================
 
 @st.cache_data(ttl=60)
-def get_live_price(ticker: str) -> Dict[str, Optional[float]]:
+def get_live_price(ticker: str):
     if yf is None:
-        return {"price": None, "change": None}
+        return None, None
 
     try:
         hist = yf.Ticker(ticker).history(period="1d", interval="1m")
         if hist.empty:
-            return {"price": None, "change": None}
+            return None, None
 
-        last = float(hist["Close"].iloc[-1])
-        open_ = float(hist["Open"].iloc[0])
-
-        return {
-            "price": round(last, 2),
-            "change": round(last - open_, 2),
-        }
+        price = float(hist["Close"].iloc[-1])
+        change = price - float(hist["Open"].iloc[0])
+        return round(price, 2), round(change, 2)
     except Exception:
-        return {"price": None, "change": None}
+        return None, None
 
 
 # ============================================================
-# PORTFOLIO COMPUTATION
+# PORTFOLIO CALCULATION
 # ============================================================
 
-def compute_stock_portfolio(df: pd.DataFrame) -> pd.DataFrame:
+def compute_portfolio(df: pd.DataFrame) -> pd.DataFrame:
     rows = []
 
-    for _, row in df.iterrows():
-        ticker = str(row["Ticker"]).upper().strip()
-        live = get_live_price(ticker)
+    for _, r in df.iterrows():
+        ticker = str(r["Ticker"]).upper()
+        shares = float(r["Shares"])
+        cost = float(r["Cost_Basis"])
 
-        if live["price"] is None:
+        price, _ = get_live_price(ticker)
+        if price is None:
             continue
 
-        shares = float(row["Shares"])
-        cost = float(row["Cost_Basis"])
+        mv = shares * price
+        pnl = mv - (shares * cost)
 
-        market_value = shares * live["price"]
-        cost_value = shares * cost
-        pnl = market_value - cost_value
-
-        rows.append({
-            "Ticker": ticker,
-            "Shares": shares,
-            "Live Price": live["price"],
-            "Market Value": round(market_value, 2),
-            "Cost Basis": round(cost_value, 2),
-            "PnL": round(pnl, 2),
-        })
+        rows.append(
+            {
+                "Ticker": ticker,
+                "Shares": shares,
+                "Live Price": price,
+                "Market Value": round(mv, 2),
+                "Cost Basis": round(shares * cost, 2),
+                "PnL": round(pnl, 2),
+            }
+        )
 
     if not rows:
         return pd.DataFrame()
@@ -549,348 +801,218 @@ def compute_stock_portfolio(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ============================================================
-# ETF LOOK-THROUGH ENGINE
+# ETF LOOK-THROUGH
 # ============================================================
 
-KNOWN_ETFS = {
-    "SPY", "VOO", "VTI", "QQQ", "IVV", "DIA",
-    "SCHB", "SCHX", "IWM", "VT"
-}
+KNOWN_ETFS = {"SPY", "VOO", "VTI", "QQQ", "IVV", "DIA"}
+
 
 def is_etf(ticker: str) -> bool:
-    if yf is None:
-        return False
+    if ticker in KNOWN_ETFS:
+        return True
     try:
         info = yf.Ticker(ticker).info or {}
-        return info.get("quoteType") == "ETF" or ticker in KNOWN_ETFS
+        return info.get("quoteType") == "ETF"
     except Exception:
-        return ticker in KNOWN_ETFS
+        return False
 
 
-@st.cache_data(ttl=24 * 3600)
+@st.cache_data(ttl=86400)
 def get_etf_holdings(ticker: str, limit: int = 10) -> pd.DataFrame:
     try:
-        etf = yf.Ticker(ticker)
-        holdings = getattr(etf, "fund_holdings", None)
-
-        if holdings is None or holdings.empty:
+        t = yf.Ticker(ticker)
+        h = getattr(t, "fund_holdings", None)
+        if h is None or h.empty:
             return pd.DataFrame()
 
-        df = holdings[["symbol", "holdingPercent"]].dropna()
-        df = df.rename(
-            columns={"symbol": "Ticker", "holdingPercent": "Weight"}
-        )
-        df["Weight"] = df["Weight"] / 100.0
-
+        df = h[["symbol", "holdingPercent"]].dropna()
+        df.columns = ["Ticker", "Weight"]
+        df["Weight"] = df["Weight"] / 100
         return df.head(limit)
     except Exception:
         return pd.DataFrame()
 
 
-def compute_lookthrough_exposure(portfolio: pd.DataFrame) -> Dict[str, pd.DataFrame]:
-    stock_rows = []
-    sector_rows = []
-
+def compute_lookthrough(portfolio: pd.DataFrame):
+    stocks, sectors = [], []
     total_value = portfolio.loc["TOTAL", "Market Value"]
 
-    for _, row in portfolio.drop(index="TOTAL").iterrows():
-        ticker = row["Ticker"]
-        position_value = row["Market Value"]
-        weight = position_value / total_value
+    for _, r in portfolio.drop(index="TOTAL").iterrows():
+        ticker = r["Ticker"]
+        weight = r["Market Value"] / total_value
 
         if is_etf(ticker):
             holdings = get_etf_holdings(ticker)
-
             for _, h in holdings.iterrows():
-                lt_weight = weight * h["Weight"]
-                stock_rows.append({
-                    "Ticker": h["Ticker"],
-                    "Weight": lt_weight
-                })
-
-                try:
-                    info = yf.Ticker(h["Ticker"]).info or {}
-                    sector = info.get("sector", "Other")
-                except Exception:
-                    sector = "Other"
-
-                sector_rows.append({
-                    "Sector": sector,
-                    "Weight": lt_weight
-                })
+                stocks.append(
+                    {"Ticker": h["Ticker"], "Weight": weight * h["Weight"]}
+                )
         else:
-            stock_rows.append({"Ticker": ticker, "Weight": weight})
+            stocks.append({"Ticker": ticker, "Weight": weight})
 
-            try:
-                info = yf.Ticker(ticker).info or {}
-                sector = info.get("sector", "Other")
-            except Exception:
-                sector = "Other"
-
-            sector_rows.append({"Sector": sector, "Weight": weight})
-
-    stock_df = (
-        pd.DataFrame(stock_rows)
-        .groupby("Ticker", as_index=False)
-        .sum()
-        .sort_values("Weight", ascending=False)
-    )
-    sector_df = (
-        pd.DataFrame(sector_rows)
-        .groupby("Sector", as_index=False)
-        .sum()
-        .sort_values("Weight", ascending=False)
-    )
-
+    stock_df = pd.DataFrame(stocks).groupby("Ticker").sum().reset_index()
     stock_df["Weight %"] = (stock_df["Weight"] * 100).round(2)
-    sector_df["Weight %"] = (sector_df["Weight"] * 100).round(2)
 
-    return {"stocks": stock_df, "sectors": sector_df}
+    return stock_df.sort_values("Weight %", ascending=False)
 
 
 # ============================================================
-# PORTFOLIO OVERVIEW PAGE (UNIFIED)
+# DIVIDENDS
+# ============================================================
+
+@st.cache_data(ttl=3600)
+def get_dividends(ticker: str):
+    try:
+        d = yf.Ticker(ticker).dividends
+        if d is None or d.empty:
+            return 0.0
+        last_year = d[d.index >= (pd.Timestamp.now() - pd.DateOffset(years=1))]
+        return float(last_year.sum())
+    except Exception:
+        return 0.0
+
+
+def compute_dividend_table(portfolio: pd.DataFrame):
+    rows = []
+
+    for _, r in portfolio.drop(index="TOTAL").iterrows():
+        div = get_dividends(r["Ticker"])
+        income = div * r["Shares"]
+        yield_pct = (div / r["Live Price"]) * 100 if r["Live Price"] > 0 else 0
+
+        rows.append(
+            {
+                "Ticker": r["Ticker"],
+                "Annual Dividend / Share": round(div, 2),
+                "Yield %": round(yield_pct, 2),
+                "Annual Income": round(income, 2),
+            }
+        )
+
+    df = pd.DataFrame(rows)
+    df.loc["TOTAL", "Annual Income"] = df["Annual Income"].sum()
+    return df
+
+
+# ============================================================
+# PAGES
 # ============================================================
 
 def render_portfolio_overview():
-    page_header(
-        "Portfolio Overview",
-        "Upload once. Track holdings, exposure, income & goals.",
-        icon="📊",
+    page_header("Portfolio Overview", "Upload once. Everything flows from here.", "📊")
+
+    st.download_button(
+        "Download CSV Template",
+        portfolio_template_csv(),
+        file_name="portfolio_template.csv",
     )
 
-    with st.container(border=True):
-        st.markdown("#### 📁 Upload Portfolio")
-
-        st.download_button(
-            "⬇️ Download CSV Template",
-            portfolio_template_csv(),
-            file_name="portfolio_template.csv",
-            mime="text/csv",
-        )
-
-        uploaded = st.file_uploader(
-            "Upload CSV (Ticker, Shares, Cost_Basis)",
-            type="csv",
-            key="portfolio_upload",
-        )
+    uploaded = st.file_uploader(
+        "Upload Portfolio CSV",
+        type="csv",
+        key="portfolio_upload_main",
+    )
 
     if not uploaded:
         st.info("Upload a portfolio to continue.")
         return
 
-    raw_df = pd.read_csv(uploaded)
-    ok, msg = validate_portfolio_df(raw_df)
+    raw = pd.read_csv(uploaded)
+    ok, msg = validate_portfolio(raw)
     if not ok:
         st.error(msg)
         return
 
-    portfolio = compute_stock_portfolio(raw_df)
+    portfolio = compute_portfolio(raw)
     if portfolio.empty:
         st.warning("No valid holdings.")
         return
 
-    st.session_state.portfolio_raw = raw_df
+    st.session_state.portfolio_raw = raw
     st.session_state.portfolio = portfolio
 
     divider()
 
-    total_value = portfolio.loc["TOTAL", "Market Value"]
-    total_pnl = portfolio.loc["TOTAL", "PnL"]
+    st.dataframe(portfolio, use_container_width=True)
 
-    metric_grid([
-        ("Total Value", f"${round(total_value, 2):,}", None),
-        ("Total P&L", f"${round(total_pnl, 2):,}", None),
-        ("Holdings", str(len(portfolio.drop(index='TOTAL'))), None),
-    ])
+    income = compute_dividend_table(portfolio)
+    st.session_state.portfolio_meta["income"] = income.to_dict()
 
-    spacer()
-    section("📄 Holdings")
-
-    st.dataframe(portfolio, use_container_width=True, height=420)
-
-    spacer()
-    section("🧬 Look-Through Exposure")
-
-    exposure = compute_lookthrough_exposure(portfolio)
-    c1, c2 = st.columns(2)
-
-    with c1:
-        with st.container(border=True):
-            st.markdown("**Top Stock Exposure**")
-            st.dataframe(exposure["stocks"].head(10), use_container_width=True)
-
-    with c2:
-        with st.container(border=True):
-            st.markdown("**Sector Exposure**")
-            st.dataframe(exposure["sectors"], use_container_width=True)
-
-# ===== END PART 3 / 8 =====
-# ============================================================
-# PART 4 / 8 — DIVIDENDS & INCOME ENGINE
-# ============================================================
-
-# ============================================================
-# DIVIDEND HISTORY (TTM, TIMEZONE-SAFE)
-# ============================================================
-
-@st.cache_data(ttl=3600)
-def get_dividend_history(ticker: str) -> pd.DataFrame:
-    if yf is None:
-        return pd.DataFrame()
-
-    try:
-        divs = yf.Ticker(ticker).dividends
-        if divs is None or divs.empty:
-            return pd.DataFrame()
-
-        df = divs.reset_index()
-        df.columns = ["Date", "Dividend"]
-        df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.tz_localize(None)
-        df = df.dropna(subset=["Date"])
-
-        return df
-    except Exception:
-        return pd.DataFrame()
-
-
-def trailing_12m_dividend(div_df: pd.DataFrame) -> float:
-    if div_df.empty:
-        return 0.0
-
-    cutoff = pd.Timestamp.now().tz_localize(None) - pd.DateOffset(years=1)
-    return round(float(div_df[div_df["Date"] >= cutoff]["Dividend"].sum()), 4)
-
-
-# ============================================================
-# DIVIDEND INCOME PER HOLDING
-# ============================================================
-
-def compute_dividend_income(portfolio: pd.DataFrame) -> pd.DataFrame:
-    rows = []
-
-    for _, row in portfolio.drop(index="TOTAL", errors="ignore").iterrows():
-        ticker = row["Ticker"]
-        shares = float(row["Shares"])
-        live_price = float(row["Live Price"])
-        market_value = float(row["Market Value"])
-
-        div_df = get_dividend_history(ticker)
-        annual_div_per_share = trailing_12m_dividend(div_df)
-
-        annual_income = annual_div_per_share * shares
-        yield_pct = (
-            (annual_div_per_share / live_price) * 100
-            if live_price > 0 else 0.0
-        )
-
-        rows.append({
-            "Ticker": ticker,
-            "Annual Dividend / Share": round(annual_div_per_share, 4),
-            "Dividend Yield %": round(yield_pct, 2),
-            "Annual Income ($)": round(annual_income, 2),
-        })
-
-    if not rows:
-        return pd.DataFrame()
-
-    df = pd.DataFrame(rows)
-    df.loc["TOTAL", "Annual Income ($)"] = df["Annual Income ($)"].sum()
-
-    return df
-
-
-# ============================================================
-# EXTEND: PORTFOLIO OVERVIEW — INCOME SECTION
-# ============================================================
-
-def render_portfolio_income_section(portfolio: pd.DataFrame):
     divider()
-    page_header(
-        "Dividend Income",
-        "Real trailing-12-month income from your holdings",
-        icon="💵",
-    )
 
-    income_df = compute_dividend_income(portfolio)
+    st.subheader("Dividend Income")
+    st.dataframe(income, use_container_width=True)
 
-    if income_df.empty:
-        st.info("No dividend data available for current holdings.")
-        st.session_state.portfolio_meta["income"] = {}
+
+def render_portfolio_insights():
+    page_header("Portfolio Insights", "Allocation and look-through exposure", "🧬")
+
+    portfolio = st.session_state.get("portfolio")
+    if portfolio is None or portfolio.empty:
+        st.info("Upload a portfolio first.")
         return
 
-    c1, c2 = st.columns([2, 1])
+    exposure = compute_lookthrough(portfolio)
+    st.subheader("Look-Through Stock Exposure")
+    st.dataframe(exposure.head(15), use_container_width=True)
+# ============================================================
+# KATTA WEALTH INSIGHTS
+# FILE 8 / 9 — features/goals.py
+# ============================================================
 
-    with c1:
-        with st.container(border=True):
-            st.markdown("**Income by Holding**")
-            st.dataframe(
-                income_df,
-                use_container_width=True,
-                height=320,
-            )
+from __future__ import annotations
 
-    total_income = float(income_df.loc["TOTAL", "Annual Income ($)"])
-    total_value = float(portfolio.loc["TOTAL", "Market Value"])
-    portfolio_yield = (total_income / total_value * 100) if total_value > 0 else 0.0
+import numpy as np
+import pandas as pd
+import streamlit as st
 
-    with c2:
-        card_metric(
-            "Annual Portfolio Income",
-            f"${round(total_income, 2):,}"
-        )
-        card_metric(
-            "Portfolio Yield",
-            f"{round(portfolio_yield, 2)}%"
-        )
-
-    # Persist for AI + goals
-    st.session_state.portfolio_meta["income"] = {
-        "total_income": round(total_income, 2),
-        "portfolio_yield": round(portfolio_yield, 2),
-        "by_holding": income_df.to_dict(),
-    }
+try:
+    import yfinance as yf
+except Exception:
+    yf = None
 
 
 # ============================================================
-# HOOK INCOME SECTION INTO PORTFOLIO OVERVIEW
+# UI HELPERS
 # ============================================================
 
-# Call this at the END of render_portfolio_overview()
-# (Placed here so definition exists before router)
+def page_header(title: str, subtitle: str | None = None, icon: str = ""):
+    st.markdown(
+        f"""
+        <div style="padding-bottom:1rem;">
+            <h2>{icon} {title}</h2>
+            <p style="color:#6b7280;">{subtitle or ""}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-def render_portfolio_overview_with_income():
-    render_portfolio_overview()
-    portfolio = st.session_state.get("portfolio")
-    if portfolio is not None and not portfolio.empty:
-        render_portfolio_income_section(portfolio)
 
-# ===== END PART 4 / 8 =====
-# ============================================================
-# PART 5 / 8 — MONTE CARLO GOAL PROBABILITY ENGINE
-# ============================================================
+def divider():
+    st.markdown("---")
+
 
 # ============================================================
-# RETURN & VOLATILITY ESTIMATION (FROM REAL HOLDINGS)
+# PORTFOLIO RETURN ESTIMATION
 # ============================================================
 
 @st.cache_data(ttl=3600)
-def estimate_portfolio_stats(portfolio: pd.DataFrame) -> Tuple[float, float]:
+def estimate_portfolio_stats(portfolio: pd.DataFrame):
     """
-    Estimate expected annual return and volatility from holdings.
-    Uses historical prices (3Y) and equal-weight aggregation.
+    Estimate expected annual return and volatility
+    using historical daily returns (3Y lookback).
     """
-    if yf is None or portfolio.empty:
+    if yf is None or portfolio is None or portfolio.empty:
         return 0.07, 0.15  # conservative defaults
 
     returns = []
 
-    for _, row in portfolio.drop(index="TOTAL", errors="ignore").iterrows():
+    for _, r in portfolio.drop(index="TOTAL", errors="ignore").iterrows():
         try:
-            prices = yf.Ticker(row["Ticker"]).history(period="3y")["Close"]
-            r = prices.pct_change().dropna()
-            if not r.empty:
-                returns.append(r)
+            prices = yf.Ticker(r["Ticker"]).history(period="3y")["Close"]
+            daily = prices.pct_change().dropna()
+            if not daily.empty:
+                returns.append(daily)
         except Exception:
             continue
 
@@ -906,27 +1028,26 @@ def estimate_portfolio_stats(portfolio: pd.DataFrame) -> Tuple[float, float]:
 
 
 # ============================================================
-# MONTE CARLO SIMULATION CORE
+# MONTE CARLO SIMULATION
 # ============================================================
 
 def monte_carlo_simulation(
     start_value: float,
     annual_contribution: float,
     years: int,
-    exp_return: float,
+    expected_return: float,
     volatility: float,
     simulations: int = 3000,
-) -> np.ndarray:
+):
     """
-    Monte Carlo simulation using lognormal-style returns.
+    Monte Carlo simulation of portfolio value paths.
     """
-    steps = years
-    results = np.zeros((simulations, steps))
+    results = np.zeros((simulations, years))
 
     for i in range(simulations):
         value = start_value
-        for y in range(steps):
-            shock = np.random.normal(exp_return, volatility)
+        for y in range(years):
+            shock = np.random.normal(expected_return, volatility)
             value = value * (1 + shock) + annual_contribution
             results[i, y] = value
 
@@ -939,14 +1060,23 @@ def goal_success_probability(simulations: np.ndarray, goal: float) -> float:
 
 
 # ============================================================
-# GOAL PROBABILITY PAGE (PRO)
+# VISUAL HELPERS
+# ============================================================
+
+def plot_simulation_paths(simulations: np.ndarray, max_paths: int = 50):
+    df = pd.DataFrame(simulations.T)
+    st.line_chart(df.sample(min(max_paths, df.shape[1]), axis=1))
+
+
+# ============================================================
+# GOAL PROBABILITY PAGE
 # ============================================================
 
 def render_goal_probability():
     page_header(
         "Goal Probability",
         "Estimate the likelihood of reaching your long-term goal",
-        icon="🎯",
+        "🎯",
     )
 
     portfolio = st.session_state.get("portfolio")
@@ -985,17 +1115,19 @@ def render_goal_probability():
         start_value=total_value,
         annual_contribution=annual,
         years=years,
-        exp_return=exp_return,
+        expected_return=exp_return,
         volatility=volatility,
     )
 
     probability = goal_success_probability(sims, goal)
 
-    metric_grid([
-        ("Expected Return", f"{round(exp_return * 100, 2)}%", None),
-        ("Volatility", f"{round(volatility * 100, 2)}%", None),
-        ("Goal Success Probability", f"{probability}%", None),
-    ])
+    st.metric("Goal Success Probability", f"{probability}%")
+    st.metric("Expected Return", f"{round(exp_return * 100, 2)}%")
+    st.metric("Volatility", f"{round(volatility * 100, 2)}%")
+
+    divider()
+
+    st.subheader("Outcome Distribution")
 
     final_vals = sims[:, -1]
 
@@ -1008,12 +1140,14 @@ def render_goal_probability():
         ],
     })
 
-    spacer()
-    with st.container(border=True):
-        st.markdown("**Outcome Distribution**")
-        st.dataframe(summary, use_container_width=True)
+    st.dataframe(summary, use_container_width=True)
 
-    # Persist for AI
+    divider()
+
+    st.subheader("Monte Carlo Paths")
+    plot_simulation_paths(sims)
+
+    # Persist for AI context
     st.session_state.portfolio_meta["goal_probability"] = {
         "goal": goal,
         "years": years,
@@ -1021,564 +1155,128 @@ def render_goal_probability():
         "expected_return": exp_return,
         "volatility": volatility,
     }
-
-# ===== END PART 5 / 8 =====
 # ============================================================
-# PART 6 / 8 — AI ENGINE & AI FEATURES (PRO)
-# ============================================================
-
-# ============================================================
-# AI CORE (GROQ CLIENT)
+# KATTA WEALTH INSIGHTS
+# FILE 8 / 9 — features/goals.py
 # ============================================================
 
-_groq_client = None
+from __future__ import annotations
 
-def ai(prompt: str) -> str:
+import numpy as np
+import pandas as pd
+import streamlit as st
+
+try:
+    import yfinance as yf
+except Exception:
+    yf = None
+
+
+# ============================================================
+# UI HELPERS
+# ============================================================
+
+def page_header(title: str, subtitle: str | None = None, icon: str = ""):
+    st.markdown(
+        f"""
+        <div style="padding-bottom:1rem;">
+            <h2>{icon} {title}</h2>
+            <p style="color:#6b7280;">{subtitle or ""}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def divider():
+    st.markdown("---")
+
+
+# ============================================================
+# PORTFOLIO RETURN ESTIMATION
+# ============================================================
+
+@st.cache_data(ttl=3600)
+def estimate_portfolio_stats(portfolio: pd.DataFrame):
     """
-    Central AI helper.
-    Educational only — no investment advice.
+    Estimate expected annual return and volatility
+    using historical daily returns (3Y lookback).
     """
-    global _groq_client
-
-    if not is_pro():
-        return "🔒 This AI feature is available in Pro."
-
-    if Groq is None or not GROQ_API_KEY:
-        return "⚠️ AI is not configured. Missing GROQ_API_KEY."
-
-    if _groq_client is None:
-        _groq_client = Groq(api_key=GROQ_API_KEY)
-
-    try:
-        response = _groq_client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a financial education assistant. "
-                        "Do not give investment advice. "
-                        "Explain concepts clearly and responsibly."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": prompt,
-                },
-            ],
-            temperature=0.4,
-            max_tokens=800,
-        )
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        return f"AI error: {str(e)}"
-
-
-# ============================================================
-# AI CONTEXT BUILDER
-# ============================================================
-
-def build_ai_context() -> Dict[str, Any]:
-    ctx: Dict[str, Any] = {}
-
-    portfolio = st.session_state.get("portfolio")
-    meta = st.session_state.get("portfolio_meta", {})
-
-    if portfolio is not None and not portfolio.empty:
-        if "TOTAL" in portfolio.index:
-            ctx["total_value"] = float(portfolio.loc["TOTAL", "Market Value"])
-            ctx["total_pnl"] = float(portfolio.loc["TOTAL", "PnL"])
-
-        ctx["positions"] = [
-            {
-                "ticker": row.get("Ticker"),
-                "market_value": row.get("Market Value"),
-                "pnl": row.get("PnL"),
-            }
-            for _, row in portfolio.drop(index="TOTAL", errors="ignore").iterrows()
-        ]
-
-    if meta:
-        ctx["meta"] = meta
-
-    return ctx
-
-
-def ai_block(title: str, prompt: str):
-    with st.container(border=True):
-        st.markdown(f"**{title}**")
-        st.markdown(ai(prompt))
-
-
-# ============================================================
-# AI PAGES
-# ============================================================
-
-def render_portfolio_health_ai():
-    page_header(
-        "Portfolio Health",
-        "High-level educational assessment of portfolio structure",
-        icon="🧠",
-    )
-
-    portfolio = st.session_state.get("portfolio")
-    if portfolio is None or portfolio.empty:
-        st.info("Upload a portfolio first.")
-        return
-
-    total_value = portfolio.loc["TOTAL", "Market Value"]
-    total_pnl = portfolio.loc["TOTAL", "PnL"]
-
-    score = max(
-        30,
-        min(95, int(100 - abs(total_pnl) / max(total_value, 1) * 100)),
-    )
-
-    metric_grid([
-        ("Health Score", f"{score} / 100", None),
-        ("Total Value", f"${round(total_value, 2):,}", None),
-        ("Total P&L", f"${round(total_pnl, 2):,}", None),
-    ])
-
-    ai_block(
-        "What this score means",
-        f"Explain what a portfolio health score of {score} means "
-        f"for a long-term investor.\n\nContext:\n{safe_json(build_ai_context())}",
-    )
-
-
-def render_ai_rebalancing():
-    page_header(
-        "AI Rebalancing",
-        "Educational rebalancing ideas (not advice)",
-        icon="⚖️",
-    )
-
-    portfolio = st.session_state.get("portfolio")
-    if portfolio is None or portfolio.empty:
-        st.info("Upload a portfolio first.")
-        return
-
-    ai_block(
-        "Rebalancing Insights",
-        "Analyze this portfolio and suggest educational "
-        "rebalancing concepts (no advice):\n\n"
-        + safe_json(build_ai_context()),
-    )
-
-
-def render_income_forecast_ai():
-    page_header(
-        "Income Forecast",
-        "Understanding dividend-based income",
-        icon="💵",
-    )
-
-    meta = st.session_state.get("portfolio_meta", {})
-    income = meta.get("income", {}).get("total_income")
-
-    if income is None:
-        st.info("Upload a dividend-paying portfolio first.")
-        return
-
-    metric_grid([
-        ("Estimated Annual Income", f"${round(income, 2):,}", None),
-    ])
-
-    ai_block(
-        "Income Explanation",
-        f"Explain dividend income investing using an estimated "
-        f"annual income of ${round(income, 2)}.\n\n"
-        f"Context:\n{safe_json(build_ai_context())}",
-    )
-
-
-def render_teen_explainer_ai():
-    page_header(
-        "Teen Explainer",
-        "Your portfolio explained simply",
-        icon="🎓",
-    )
-
-    portfolio = st.session_state.get("portfolio")
-    if portfolio is None or portfolio.empty:
-        st.info("Upload a portfolio first.")
-        return
-
-    ai_block(
-        "Explain it like I'm in high school",
-        "Explain this portfolio to a high-school student "
-        "who is learning about investing:\n\n"
-        + safe_json(build_ai_context()),
-    )
-
-
-def render_ai_chatbot():
-    page_header(
-        "AI Chatbot",
-        "Ask questions about markets, portfolios, and finance concepts",
-        icon="💬",
-    )
-
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = []
-
-    for msg in st.session_state.chat_history:
-        role = "You" if msg["role"] == "user" else "AI"
-        st.markdown(f"**{role}:** {msg['content']}")
-
-    user_input = st.text_input("Ask a question")
-
-    if st.button("Send", use_container_width=True) and user_input:
-        st.session_state.chat_history.append(
-            {"role": "user", "content": user_input}
-        )
-
-        response = ai(
-            "Context:\n"
-            + safe_json(build_ai_context())
-            + "\n\nUser question:\n"
-            + user_input
-        )
-
-        st.session_state.chat_history.append(
-            {"role": "assistant", "content": response}
-        )
-        st.rerun()
-
-# ===== END PART 6 / 8 =====
-# ============================================================
-# PART 7 / 8 — FEATURE REGISTRY, SIDEBAR, ROUTER
-# ============================================================
-
-# ============================================================
-# FEATURE REGISTRY
-# ============================================================
-
-FREE_PAGES = [
-    "Portfolio Overview",
-]
-
-PRO_PAGES = [
-    "Goal Probability",
-    "Portfolio Health",
-    "AI Rebalancing",
-    "Income Forecast",
-    "Teen Explainer",
-    "AI Chatbot",
-]
-
-
-def allowed_pages() -> List[str]:
-    if is_pro():
-        return FREE_PAGES + PRO_PAGES
-    return FREE_PAGES
-
-
-# ============================================================
-# SIDEBAR NAVIGATION
-# ============================================================
-
-def sidebar_nav() -> str:
-    with st.sidebar:
-        st.markdown("## 💎 Katta Wealth")
-
-        if logged_in():
-            st.caption(f"👤 {st.session_state.current_user}")
-            st.caption(f"Plan: {'Pro' if is_pro() else 'Free'}")
-        else:
-            st.caption("Not logged in")
-
-        divider()
-
-        st.markdown("### 📍 Explore")
-
-        page = st.radio(
-            "",
-            allowed_pages(),
-            key="nav_radio",
-        )
-
-        divider()
-
-        if not is_pro():
-            st.info("Unlock AI insights, simulations & planning")
-
-            if st.button("💎 Upgrade to Pro (Demo)", use_container_width=True):
-                upgrade_current_user_to_pro()
-                st.success("You are now Pro!")
-                st.rerun()
-
-        if logged_in():
-            if st.button("🚪 Log out", use_container_width=True):
-                st.session_state.current_user = None
-                st.session_state.tier = "Free"
-                cookie_clear_user()
-                st.rerun()
-
-        return page
-
-
-# ============================================================
-# MAIN ROUTER
-# ============================================================
-
-def main_router(page: str) -> None:
-
-    # ---------- FREE ----------
-    if page == "Portfolio Overview":
-        render_portfolio_overview_with_income()
-
-    # ---------- PRO ----------
-    elif is_pro() and page == "Goal Probability":
-        render_goal_probability()
-
-    elif is_pro() and page == "Portfolio Health":
-        render_portfolio_health_ai()
-
-    elif is_pro() and page == "AI Rebalancing":
-        render_ai_rebalancing()
-
-    elif is_pro() and page == "Income Forecast":
-        render_income_forecast_ai()
-
-    elif is_pro() and page == "Teen Explainer":
-        render_teen_explainer_ai()
-
-    elif is_pro() and page == "AI Chatbot":
-        render_ai_chatbot()
-
-    else:
-        st.info("Select a feature from the left menu.")
-
-# ===== END PART 7 / 8 =====
-# ============================================================
-# PART 8 / 8 — SAFE ENTRYPOINT & EXECUTION
-# ============================================================
-
-def run_app() -> None:
-    """
-    Single safe entrypoint for the app.
-    Prevents duplicate execution and keeps auth gating clean.
-    """
-
-    # Authentication gate
-    if not logged_in():
-        auth_ui()
-        return
-
-    # Sidebar navigation
-    page = sidebar_nav()
-
-    # Route to selected page
-    main_router(page)
-
-
-# ============================================================
-# EXECUTION GUARD
-# ============================================================
-
-if __name__ == "__main__":
-    run_app()
-
-# ===== END PART 8 / 8 =====
-# ============================================================
-# PART 9 / 9 — VISUAL ANALYTICS & INSIGHTS DASHBOARD
-# ============================================================
-
-# ============================================================
-# CHART HELPERS (STREAMLIT-NATIVE, SAFE)
-# ============================================================
-
-def plot_allocation_pie(portfolio: pd.DataFrame):
-    df = portfolio.drop(index="TOTAL", errors="ignore").copy()
-    df = df[["Ticker", "Market Value"]]
-
-    st.subheader("📊 Allocation by Holding")
-    st.pyplot(
-        df.set_index("Ticker")
-          .plot.pie(
-              y="Market Value",
-              figsize=(5, 5),
-              autopct="%1.1f%%",
-              legend=False
-          )
-          .get_figure()
-    )
-
-
-def plot_monte_carlo_paths(simulations: np.ndarray, years: int):
-    st.subheader("📈 Monte Carlo Portfolio Paths")
-
-    df = pd.DataFrame(simulations.T)
-    st.line_chart(df.sample(min(50, df.shape[1]), axis=1))
-
-
-# ============================================================
-# PORTFOLIO INSIGHTS DASHBOARD (NEW PAGE)
-# ============================================================
-
-def render_portfolio_insights():
-    page_header(
-        "Portfolio Insights",
-        "Visual summary of allocation, risk, income, and goals",
-        icon="📊",
-    )
-
-    portfolio = st.session_state.get("portfolio")
-    meta = st.session_state.get("portfolio_meta", {})
-
-    if portfolio is None or portfolio.empty:
-        st.info("Upload a portfolio first.")
-        return
-
-    # ---------------------------
-    # Snapshot Metrics
-    # ---------------------------
-    total_value = portfolio.loc["TOTAL", "Market Value"]
-    total_pnl = portfolio.loc["TOTAL", "PnL"]
-
-    income = meta.get("income", {}).get("total_income", 0)
-    goal_prob = meta.get("goal_probability", {}).get("probability")
-
-    metric_grid([
-        ("Portfolio Value", f"${round(total_value, 2):,}", None),
-        ("Total P&L", f"${round(total_pnl, 2):,}", None),
-        ("Annual Income", f"${round(income, 2):,}", None),
-        ("Goal Success", f"{goal_prob}%" if goal_prob else "—", None),
-    ])
-
-    divider()
-
-    # ---------------------------
-    # Allocation Visualization
-    # ---------------------------
-    with st.container(border=True):
-        plot_allocation_pie(portfolio)
-
-    divider()
-
-    # ---------------------------
-    # Monte Carlo Visualization (If Available)
-    # ---------------------------
-    if "goal_probability" in meta:
-        gp = meta["goal_probability"]
-
-        exp_return = gp.get("expected_return", 0.07)
-        volatility = gp.get("volatility", 0.15)
-        years = gp.get("years", 20)
-
-        sims = monte_carlo_simulation(
-            start_value=total_value,
-            annual_contribution=0,
-            years=years,
-            exp_return=exp_return,
-            volatility=volatility,
-            simulations=2000,
-        )
-
-        with st.container(border=True):
-            plot_monte_carlo_paths(sims, years)
-
-    divider()
-
-    # ---------------------------
-    # AI Summary (Optional, Pro)
-    # ---------------------------
-    if is_pro():
-        ai_block(
-            "Portfolio Summary",
-            "Summarize this portfolio’s allocation, income profile, "
-            "risk posture, and goal outlook in plain English:\n\n"
-            + safe_json(build_ai_context()),
-        )
-
-
-# ============================================================
-# REGISTER INSIGHTS PAGE
-# ============================================================
-
-# Add page dynamically without touching earlier lists
-if "Portfolio Insights" not in FREE_PAGES:
-    FREE_PAGES.append("Portfolio Insights")
-
-
-# ============================================================
-# EXTEND ROUTER (SAFE PATCH)
-# ============================================================
-
-_old_main_router = main_router
-
-def main_router(page: str) -> None:
-    if page == "Portfolio Insights":
-        render_portfolio_insights()
-    else:
-        _old_main_router(page)
-
-# ===== END PART 9 / 9 =====
-# ============================================================
-# PART 10 / 13 — RISK ALERTS & DRAWDOWN MONITORING
-# ============================================================
-
-def compute_drawdown(series: pd.Series) -> float:
-    running_max = series.cummax()
-    drawdown = (series - running_max) / running_max
-    return round(drawdown.min() * 100, 2)
-
-
-def render_risk_alerts():
-    page_header(
-        "Risk Alerts",
-        "Monitor volatility and drawdown risk",
-        icon="🚨",
-    )
-
-    portfolio = st.session_state.get("portfolio")
-    if portfolio is None or portfolio.empty:
-        st.info("Upload a portfolio first.")
-        return
+    if yf is None or portfolio is None or portfolio.empty:
+        return 0.07, 0.15  # conservative defaults
 
     returns = []
 
-    for _, row in portfolio.drop(index="TOTAL", errors="ignore").iterrows():
+    for _, r in portfolio.drop(index="TOTAL", errors="ignore").iterrows():
         try:
-            prices = yf.Ticker(row["Ticker"]).history(period="1y")["Close"]
-            returns.append(prices)
+            prices = yf.Ticker(r["Ticker"]).history(period="3y")["Close"]
+            daily = prices.pct_change().dropna()
+            if not daily.empty:
+                returns.append(daily)
         except Exception:
             continue
 
     if not returns:
-        st.info("Not enough data for risk analysis.")
-        return
+        return 0.07, 0.15
 
     combined = pd.concat(returns, axis=1).mean(axis=1)
-    dd = compute_drawdown(combined)
 
-    metric_grid([
-        ("Max Drawdown (1Y)", f"{dd}%", None),
-        ("Risk Level", "High" if dd < -20 else "Moderate", None),
-    ])
+    exp_return = float(combined.mean() * 252)
+    volatility = float(combined.std() * np.sqrt(252))
 
-    if is_pro():
-        ai_block(
-            "Risk Explanation",
-            f"Explain what a {dd}% drawdown means for a long-term investor.\n\n"
-            + safe_json(build_ai_context()),
-        )
+    return round(exp_return, 4), round(volatility, 4)
+
+
 # ============================================================
-# PART 11 / 13 — TAX OPTIMIZATION (EDUCATIONAL)
+# MONTE CARLO SIMULATION
 # ============================================================
 
-def estimate_capital_gains_tax(portfolio: pd.DataFrame, tax_rate: float) -> float:
-    pnl = portfolio.loc["TOTAL", "PnL"]
-    return round(max(pnl, 0) * tax_rate, 2)
+def monte_carlo_simulation(
+    start_value: float,
+    annual_contribution: float,
+    years: int,
+    expected_return: float,
+    volatility: float,
+    simulations: int = 3000,
+):
+    """
+    Monte Carlo simulation of portfolio value paths.
+    """
+    results = np.zeros((simulations, years))
+
+    for i in range(simulations):
+        value = start_value
+        for y in range(years):
+            shock = np.random.normal(expected_return, volatility)
+            value = value * (1 + shock) + annual_contribution
+            results[i, y] = value
+
+    return results
 
 
-def render_tax_optimization():
+def goal_success_probability(simulations: np.ndarray, goal: float) -> float:
+    final_values = simulations[:, -1]
+    return round((final_values >= goal).mean() * 100, 2)
+
+
+# ============================================================
+# VISUAL HELPERS
+# ============================================================
+
+def plot_simulation_paths(simulations: np.ndarray, max_paths: int = 50):
+    df = pd.DataFrame(simulations.T)
+    st.line_chart(df.sample(min(max_paths, df.shape[1]), axis=1))
+
+
+# ============================================================
+# GOAL PROBABILITY PAGE
+# ============================================================
+
+def render_goal_probability():
     page_header(
-        "Tax Optimization",
-        "Understand potential capital gains impact",
-        icon="🧾",
+        "Goal Probability",
+        "Estimate the likelihood of reaching your long-term goal",
+        "🎯",
     )
 
     portfolio = st.session_state.get("portfolio")
@@ -1586,786 +1284,209 @@ def render_tax_optimization():
         st.info("Upload a portfolio first.")
         return
 
-    tax_rate = st.slider("Estimated Capital Gains Tax Rate", 0.0, 0.4, 0.15)
+    total_value = float(portfolio.loc["TOTAL", "Market Value"])
 
-    tax = estimate_capital_gains_tax(portfolio, tax_rate)
+    c1, c2, c3 = st.columns(3)
 
-    metric_grid([
-        ("Unrealized Gains", f"${round(portfolio.loc['TOTAL', 'PnL'], 2):,}", None),
-        ("Estimated Tax", f"${tax:,}", None),
-    ])
-
-    if is_pro():
-        ai_block(
-            "Tax Awareness",
-            "Explain tax-efficient investing strategies at a high level "
-            "without giving advice.\n\n"
-            + safe_json(build_ai_context()),
+    with c1:
+        goal = st.number_input(
+            "Target Goal ($)",
+            min_value=0.0,
+            value=1_000_000.0,
+            step=50_000.0,
         )
-# ============================================================
-# PART 12 / 13 — PERFORMANCE & BENCHMARKING
-# ============================================================
 
-def render_performance_benchmark():
-    page_header(
-        "Performance",
-        "Compare your portfolio vs the market",
-        icon="📈",
+    with c2:
+        annual = st.number_input(
+            "Annual Contribution ($)",
+            min_value=0.0,
+            value=10_000.0,
+            step=1_000.0,
+        )
+
+    with c3:
+        years = st.slider("Years", 1, 40, 20)
+
+    divider()
+
+    exp_return, volatility = estimate_portfolio_stats(portfolio)
+
+    sims = monte_carlo_simulation(
+        start_value=total_value,
+        annual_contribution=annual,
+        years=years,
+        expected_return=exp_return,
+        volatility=volatility,
     )
 
-    portfolio = st.session_state.get("portfolio")
-    if portfolio is None or portfolio.empty:
-        st.info("Upload a portfolio first.")
-        return
+    probability = goal_success_probability(sims, goal)
 
-    prices = []
+    st.metric("Goal Success Probability", f"{probability}%")
+    st.metric("Expected Return", f"{round(exp_return * 100, 2)}%")
+    st.metric("Volatility", f"{round(volatility * 100, 2)}%")
 
-    for _, row in portfolio.drop(index="TOTAL", errors="ignore").iterrows():
-        try:
-            p = yf.Ticker(row["Ticker"]).history(period="1y")["Close"]
-            prices.append(p)
-        except Exception:
-            continue
+    divider()
 
-    if not prices:
-        st.info("Not enough data.")
-        return
+    st.subheader("Outcome Distribution")
 
-    portfolio_series = pd.concat(prices, axis=1).mean(axis=1)
-    benchmark = yf.Ticker("SPY").history(period="1y")["Close"]
+    final_vals = sims[:, -1]
 
-    df = pd.DataFrame({
-        "Portfolio": (portfolio_series / portfolio_series.iloc[0]) - 1,
-        "S&P 500 (SPY)": (benchmark / benchmark.iloc[0]) - 1,
+    summary = pd.DataFrame({
+        "Scenario": ["Pessimistic (10%)", "Median (50%)", "Optimistic (90%)"],
+        "Ending Value ($)": [
+            round(np.percentile(final_vals, 10), 0),
+            round(np.percentile(final_vals, 50), 0),
+            round(np.percentile(final_vals, 90), 0),
+        ],
     })
 
-    st.line_chart(df)
+    st.dataframe(summary, use_container_width=True)
+
+    divider()
+
+    st.subheader("Monte Carlo Paths")
+    plot_simulation_paths(sims)
+
+    # Persist for AI context
+    st.session_state.portfolio_meta["goal_probability"] = {
+        "goal": goal,
+        "years": years,
+        "probability": probability,
+        "expected_return": exp_return,
+        "volatility": volatility,
+    }
 # ============================================================
-# PART 13 / 13 — EXPORTS & REPORTING
-# ============================================================
-
-def render_exports():
-    page_header(
-        "Exports & Reports",
-        "Download portfolio data and summaries",
-        icon="📤",
-    )
-
-    portfolio = st.session_state.get("portfolio")
-    meta = st.session_state.get("portfolio_meta", {})
-
-    if portfolio is None or portfolio.empty:
-        st.info("Upload a portfolio first.")
-        return
-
-    st.download_button(
-        "⬇️ Download Portfolio CSV",
-        portfolio.to_csv().encode("utf-8"),
-        "portfolio_snapshot.csv",
-        "text/csv",
-    )
-
-    st.download_button(
-        "⬇️ Download Portfolio JSON",
-        json.dumps(
-            {
-                "portfolio": portfolio.to_dict(),
-                "meta": meta,
-            },
-            indent=2,
-        ).encode("utf-8"),
-        "portfolio_snapshot.json",
-        "application/json",
-    )
-
-    st.success("Exports are advisor- and audit-ready.")
-# ============================================================
-# PART 14 / 14 — AI-NATIVE LANDING PAGE (KATTA WEALTH INSIGHTS)
+# KATTA WEALTH INSIGHTS
+# FILE 10 / 11 — ui/auth.py
 # ============================================================
 
-def render_landing_page():
-    st.markdown(
-        """
-        <style>
-        .hero-container {
-            display: grid;
-            grid-template-columns: 1.1fr 1fr;
-            gap: 3rem;
-            padding: 4rem 2rem;
-        }
+from __future__ import annotations
 
-        .hero-badge {
-            display: inline-block;
-            background: #e8f0ff;
-            color: #2563eb;
-            padding: 0.4rem 0.9rem;
-            border-radius: 999px;
-            font-weight: 600;
-            font-size: 0.85rem;
-            margin-bottom: 1rem;
-        }
+import streamlit as st
 
-        .hero-title {
-            font-size: 3rem;
-            font-weight: 800;
-            line-height: 1.1;
-            margin-bottom: 1rem;
-        }
-
-        .hero-title span {
-            color: #2563eb;
-        }
-
-        .hero-subtitle {
-            font-size: 1.1rem;
-            color: #4b5563;
-            max-width: 520px;
-            margin-bottom: 2rem;
-        }
-
-        .hero-actions {
-            display: flex;
-            gap: 1rem;
-        }
-
-        .btn-primary {
-            background: #2563eb;
-            color: white;
-            padding: 0.75rem 1.4rem;
-            border-radius: 0.6rem;
-            font-weight: 600;
-            text-decoration: none;
-        }
-
-        .btn-secondary {
-            background: #f3f4f6;
-            color: #111827;
-            padding: 0.75rem 1.4rem;
-            border-radius: 0.6rem;
-            font-weight: 600;
-            text-decoration: none;
-        }
-
-        .feature-row {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 2rem;
-            margin-top: 3.5rem;
-            padding: 0 2rem;
-        }
-
-        .feature-card {
-            background: #f9fafb;
-            border-radius: 1rem;
-            padding: 2rem;
-            border: 1px solid #e5e7eb;
-        }
-
-        .feature-icon {
-            font-size: 1.8rem;
-            margin-bottom: 0.7rem;
-        }
-
-        .feature-title {
-            font-weight: 700;
-            margin-bottom: 0.4rem;
-        }
-
-        .feature-desc {
-            color: #4b5563;
-            font-size: 0.95rem;
-        }
-
-        @media (max-width: 900px) {
-            .hero-container {
-                grid-template-columns: 1fr;
-            }
-            .feature-row {
-                grid-template-columns: 1fr;
-            }
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.markdown(
-        """
-        <div class="hero-container">
-            <div>
-                <div class="hero-badge">AI-Native Wealth Platform</div>
-
-                <div class="hero-title">
-                    <span>Katta Wealth Insights</span><br>
-                    Research Workspace for<br>
-                    Modern Investors
-                </div>
-
-                <div class="hero-subtitle">
-                    Katta Wealth Insights harnesses AI, market data, and probabilistic
-                    modeling to help investors understand portfolios, income, risk,
-                    and long-term outcomes — all in one intelligent workspace.
-                </div>
-
-                <div class="hero-actions">
-                    <a class="btn-primary" href="#">Get Started →</a>
-                    <a class="btn-secondary" href="#">Learn More</a>
-                </div>
-            </div>
-
-            <div>
-                <img src="https://raw.githubusercontent.com/streamlit/brand/master/logos/mark/streamlit-mark-primary.png"
-                     style="width:100%; border-radius: 1rem; box-shadow: 0 20px 50px rgba(0,0,0,0.15);" />
-            </div>
-        </div>
-
-        <div class="feature-row">
-            <div class="feature-card">
-                <div class="feature-icon">📊</div>
-                <div class="feature-title">AI Portfolio Intelligence</div>
-                <div class="feature-desc">
-                    Unified portfolio tracking with ETF look-through, income analysis,
-                    and risk diagnostics.
-                </div>
-            </div>
-
-            <div class="feature-card">
-                <div class="feature-icon">🎯</div>
-                <div class="feature-title">Goal Probability Engine</div>
-                <div class="feature-desc">
-                    Monte Carlo simulations quantify the probability of reaching
-                    financial goals — not guesses.
-                </div>
-            </div>
-
-            <div class="feature-card">
-                <div class="feature-icon">🧠</div>
-                <div class="feature-title">AI Research Assistant</div>
-                <div class="feature-desc">
-                    Context-aware AI explains portfolios, income, and risks in
-                    clear, investor-friendly language.
-                </div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+from core.session import (
+    hash_pw,
+    db_get_user,
+    db_create_user,
+    login_user,
+)
 
 
 # ============================================================
-# MAKE LANDING PAGE THE DEFAULT HOME
+# AUTH UI
 # ============================================================
 
-_old_run_app = run_app
-
-def run_app():
-    if not logged_in():
-        render_landing_page()
-        spacer(2)
-        st.markdown("### 🔐 Sign in to continue")
-        auth_ui()
-        return
-
-    page = sidebar_nav()
-    main_router(page)
-# ============================================================
-# PART 15 / 15 — WEBSITE TABS & DEMO GATING
-# ============================================================
-
-def render_home_tab():
-    page_header(
-        "Katta Wealth Insights",
-        "AI-native research and planning workspace for modern investors",
-        icon="💎",
-    )
-
-    st.markdown(
-        """
-        Katta Wealth Insights is an **AI-powered wealth intelligence platform**
-        designed to help investors understand portfolios, income, risk,
-        and long-term outcomes — all in one unified workspace.
-        """
-    )
-
-    metric_grid([
-        ("AI Insights", "Context-Aware", None),
-        ("Portfolio Types", "Stocks & ETFs", None),
-        ("Planning Horizon", "Probabilistic", None),
-    ])
-
-
-def render_about_tab():
-    page_header(
-        "About Us",
-        "Built for clarity, discipline, and long-term thinking",
-        icon="🏛️",
-    )
-
-    st.markdown(
-        """
-        **Katta Wealth Insights** was created to bridge the gap between
-        raw financial data and real investor understanding.
-
-        We believe:
-        - Markets are uncertain — probabilities matter
-        - Investors need explanations, not noise
-        - AI should clarify, not confuse
-
-        Our platform blends **data, modeling, and AI** to help investors
-        reason about decisions with confidence.
-        """
-    )
-
-
-def render_features_tab():
-    page_header(
-        "Features",
-        "A complete AI-native wealth research stack",
-        icon="✨",
-    )
-
-    st.markdown(
-        """
-        **Portfolio Intelligence**
-        - Stock & ETF tracking
-        - Look-through exposure
-        - Dividend income analysis
-
-        **Planning & Risk**
-        - Monte Carlo goal probability
-        - Drawdown & volatility monitoring
-        - Benchmark comparisons
-
-        **AI Research**
-        - Portfolio explanations
-        - Teen-friendly education mode
-        - Context-aware AI chatbot
-
-        **Enterprise-Grade**
-        - Secure authentication
-        - Audit-ready exports
-        - Scalable architecture
-        """
-    )
-
-
-def render_how_it_works_tab():
-    page_header(
-        "How It Works",
-        "From data to insight in minutes",
-        icon="⚙️",
-    )
-
-    st.markdown(
-        """
-        **1. Upload Your Portfolio**
-        Upload a simple CSV with tickers and shares.
-
-        **2. Analyze Automatically**
-        Katta Wealth Insights calculates value, income,
-        exposure, and risk in real time.
-
-        **3. Simulate Outcomes**
-        Run Monte Carlo simulations to understand
-        the probability of reaching your goals.
-
-        **4. Ask AI**
-        Get clear explanations — not advice —
-        grounded in your actual data.
-        """
-    )
-def render_demo_tab():
-    page_header(
-        "Live Demo",
-        "Explore the full Katta Wealth Insights platform",
-        icon="🚀",
-    )
-
-    st.info(
-        "All features are available inside the demo environment. "
-        "Sign in to explore portfolios, simulations, and AI insights."
-    )
-
-    # 🔐 AUTH + FULL APP
-    if not logged_in():
-        auth_ui()
-        return
-
-    page = sidebar_nav()
-    main_router(page)
-def run_app():
-    # Top-level website tabs
-    tabs = st.tabs([
-        "Home",
-        "About Us",
-        "Features",
-        "How It Works",
-        "Demo",
-    ])
-
-    with tabs[0]:
-        render_home_tab()
-
-    with tabs[1]:
-        render_about_tab()
-
-    with tabs[2]:
-        render_features_tab()
-
-    with tabs[3]:
-        render_how_it_works_tab()
-
-    with tabs[4]:
-        render_demo_tab()
-# ============================================================
-# GLOBAL APP MODE
-# ============================================================
-
-if "app_mode" not in st.session_state:
-    st.session_state.app_mode = "marketing"
-
-
-# ============================================================
-# TOP NAV BAR (ALWAYS VISIBLE)
-# ============================================================
-
-def render_top_nav():
-    st.markdown(
-        """
-        <style>
-        .top-nav {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 0.8rem 2rem;
-            border-bottom: 1px solid #e5e7eb;
-            margin-bottom: 1.5rem;
-        }
-        .nav-left {
-            font-weight: 800;
-            font-size: 1.1rem;
-        }
-        .nav-right button {
-            background: none;
-            border: none;
-            font-weight: 600;
-            margin-left: 1.2rem;
-            cursor: pointer;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    cols = st.columns([3, 5])
-
-    with cols[0]:
-        st.markdown("### 💎 Katta Wealth Insights")
-
-    with cols[1]:
-        nav_cols = st.columns(5)
-        labels = ["About Us", "Features", "How It Works", "Benefits", "Demo"]
-
-        for i, label in enumerate(labels):
-            if nav_cols[i].button(label, use_container_width=True):
-                if label == "Demo":
-                    st.session_state.app_mode = "demo"
-                else:
-                    st.session_state.app_mode = label.lower().replace(" ", "_")
-                st.rerun()
-
-
-# ============================================================
-# MARKETING PAGES
-# ============================================================
-
-def render_about():
-    page_header("About Us", "Built for long-term thinking", "🏛️")
-    st.write(
-        """
-        Katta Wealth Insights is designed to help investors reason clearly
-        about portfolios, income, risk, and long-term outcomes.
-
-        We focus on **probabilities, transparency, and education** —
-        not hype or predictions.
-        """
-    )
-
-
-def render_features():
-    page_header("Features", "AI-native wealth intelligence", "✨")
-    st.markdown("""
-    - Stock & ETF portfolio tracking  
-    - ETF look-through exposure  
-    - Dividend income analytics  
-    - Monte Carlo goal probability  
-    - Risk & drawdown monitoring  
-    - AI explanations & education mode  
-    """)
-
-
-def render_how_it_works():
-    page_header("How It Works", "From data to insight", "⚙️")
-    st.markdown("""
-    1. Upload your portfolio  
-    2. Analyze exposure, income, and risk  
-    3. Simulate future outcomes  
-    4. Ask AI for explanations  
-    """)
-
-
-def render_benefits():
-    page_header("Benefits", "Why investors use KWI", "🎯")
-    st.markdown("""
-    - Clarity over complexity  
-    - Probabilities instead of guesses  
-    - AI explanations grounded in your data  
-    - Built for investors, students, and families  
-    """)
-
-
-# ============================================================
-# FINAL ENTRYPOINT (THIS IS THE KEY)
-# ============================================================
-
-def run_app():
-    # 🔝 Always render top navigation
-    render_top_nav()
-
-    # 🟦 MARKETING MODE (NO SIDEBAR, NO APP)
-    if st.session_state.app_mode != "demo":
-        if st.session_state.app_mode == "about_us":
-            render_about()
-        elif st.session_state.app_mode == "features":
-            render_features()
-        elif st.session_state.app_mode == "how_it_works":
-            render_how_it_works()
-        elif st.session_state.app_mode == "benefits":
-            render_benefits()
-        else:
-            render_about()  # default landing
-        return
-
-    # 🚀 DEMO MODE — FULL APP ENABLED
-    if not logged_in():
-        auth_ui()
-        return
-
-    page = sidebar_nav()
-    main_router(page)
-
-
-# ============================================================
-# EXECUTION GUARD
-# ============================================================
-
-if __name__ == "__main__":
-    run_app()
-# ============================================================
-# GLOBAL MODE & PAYMENT STATE (AUTHORITATIVE)
-# ============================================================
-
-if "app_mode" not in st.session_state:
-    st.session_state.app_mode = "marketing"  # marketing | demo
-
-if "has_paid" not in st.session_state:
-    st.session_state.has_paid = False
-def render_payment_page():
-    page_header(
-        "Subscription Required",
-        "Access the full Katta Wealth Insights demo",
-        icon="💳",
-    )
-
-    st.markdown("""
-    ### Plan
-    **Katta Wealth Insights — Full Access**
-    - Portfolio analytics
-    - ETF look-through
-    - Dividend income
-    - Monte Carlo simulations
-    - AI explanations
-
-    **Price:** $19 / month
-    """)
-
-    st.info("This is a demo payment flow. Stripe can be plugged in here.")
-
-    if st.button("Pay & Continue", use_container_width=True):
-        st.session_state.has_paid = True
-        st.success("Payment successful (demo).")
-        st.rerun()
-def render_top_nav():
-    st.markdown(
-        """
-        <style>
-        .topnav {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 0.8rem 2rem;
-            border-bottom: 1px solid #1f2937;
-            margin-bottom: 1.5rem;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    left, right = st.columns([3, 7])
-
-    with left:
-        st.markdown("### 💎 Katta Wealth Insights")
-
-    with right:
-        cols = st.columns(5)
-        labels = ["About Us", "Features", "How It Works", "Benefits", "Demo"]
-
-        for i, label in enumerate(labels):
-            if cols[i].button(label, use_container_width=True):
-                if label == "Demo":
-                    st.session_state.app_mode = "demo"
-                else:
-                    st.session_state.app_mode = label.lower().replace(" ", "_")
-                st.rerun()
-def render_about():
-    page_header("About Us", "Built for long-term thinking", "🏛️")
-    st.write("""
-    Katta Wealth Insights helps investors reason clearly about
-    portfolios, income, risk, and long-term outcomes.
-
-    We focus on **probabilities, transparency, and education** —
-    not hype or predictions.
-    """)
-
-
-def render_features():
-    page_header("Features", "AI-native wealth intelligence", "✨")
-    st.markdown("""
-    - Stock & ETF portfolio tracking  
-    - ETF look-through exposure  
-    - Dividend income analytics  
-    - Monte Carlo goal probability  
-    - Risk & drawdown monitoring  
-    - AI-powered explanations  
-    """)
-
-
-def render_how_it_works():
-    page_header("How It Works", "From data to insight", "⚙️")
-    st.markdown("""
-    1. Upload your portfolio  
-    2. Analyze exposure, income, and risk  
-    3. Simulate future outcomes  
-    4. Ask AI for explanations  
-    """)
-
-
-def render_benefits():
-    page_header("Benefits", "Why investors use KWI", "🎯")
-    st.markdown("""
-    - Clarity over complexity  
-    - Probabilities instead of guesses  
-    - AI explanations grounded in your data  
-    - Built for investors, students, and families  
-    """)
-def sidebar_nav():
-    with st.sidebar:
-        st.markdown("## 💎 Katta Wealth")
-
-        if logged_in():
-            st.caption(f"👤 {st.session_state.current_user}")
-        else:
-            st.caption("Not logged in")
-
-        divider()
-        st.markdown("### 📍 Explore")
-
-        page = st.radio(
-            "",
-            [
-                "Portfolio Overview",
-                "Portfolio Insights",
-                "Goal Probability",
-                "Portfolio Health",
-                "AI Rebalancing",
-                "Income Forecast",
-                "Teen Explainer",
-                "AI Chatbot",
-                "Risk Alerts",
-                "Tax Optimization",
-                "Performance",
-                "Exports",
-            ],
-        )
-
-        divider()
-
-        if st.button("🚪 Log out", use_container_width=True):
-            st.session_state.current_user = None
-            st.session_state.has_paid = False
-            cookie_clear_user()
+def render_auth() -> None:
+    """
+    Login / Signup UI.
+    No routing, no sidebar, no redirects here.
+    """
+
+    st.markdown("## 🔐 Sign in to Katta Wealth Insights")
+
+    login_tab, signup_tab = st.tabs(["Log In", "Create Account"])
+
+    # ----------------------------
+    # LOGIN
+    # ----------------------------
+    with login_tab:
+        email = st.text_input("Email", key="auth_login_email")
+        pw = st.text_input("Password", type="password", key="auth_login_pw")
+        remember = st.checkbox("Remember me", value=True)
+
+        if st.button("Log In", key="auth_login_btn", use_container_width=True):
+            if not email or not pw:
+                st.error("Please enter email and password.")
+                return
+
+            user = db_get_user(email)
+            if not user or user["pw"] != hash_pw(pw):
+                st.error("Invalid credentials.")
+                return
+
+            login_user(email, remember=remember)
+            st.success("Logged in successfully.")
             st.rerun()
 
-        return page
-def main_router(page: str):
-    if page == "Portfolio Overview":
-        render_portfolio_overview_with_income()
-    elif page == "Portfolio Insights":
-        render_portfolio_insights()
-    elif page == "Goal Probability":
-        render_goal_probability()
-    elif page == "Portfolio Health":
-        render_portfolio_health_ai()
-    elif page == "AI Rebalancing":
-        render_ai_rebalancing()
-    elif page == "Income Forecast":
-        render_income_forecast_ai()
-    elif page == "Teen Explainer":
-        render_teen_explainer_ai()
-    elif page == "AI Chatbot":
-        render_ai_chatbot()
-    elif page == "Risk Alerts":
-        render_risk_alerts()
-    elif page == "Tax Optimization":
-        render_tax_optimization()
-    elif page == "Performance":
-        render_performance_benchmark()
-    elif page == "Exports":
-        render_exports()
-def run_app():
-    render_top_nav()
+    # ----------------------------
+    # SIGNUP
+    # ----------------------------
+    with signup_tab:
+        email = st.text_input("Email", key="auth_signup_email")
+        pw = st.text_input("Password", type="password", key="auth_signup_pw")
 
-    # ============================
-    # MARKETING MODE
-    # ============================
-    if st.session_state.app_mode != "demo":
-        if st.session_state.app_mode == "about_us":
-            render_about()
-        elif st.session_state.app_mode == "features":
-            render_features()
-        elif st.session_state.app_mode == "how_it_works":
-            render_how_it_works()
-        elif st.session_state.app_mode == "benefits":
-            render_benefits()
-        else:
-            render_about()
-        return
+        if st.button("Create Account", key="auth_signup_btn", use_container_width=True):
+            if not email or not pw:
+                st.error("Please enter email and password.")
+                return
 
-    # ============================
-    # DEMO MODE
-    # ============================
-    if not logged_in():
-        auth_ui()
-        return
+            created = db_create_user(email, hash_pw(pw))
+            if not created:
+                st.error("Account already exists.")
+                return
 
-    if not st.session_state.has_paid:
-        render_payment_page()
-        return
+            st.success("Account created. Please log in.")
+# ============================================================
+# KATTA WEALTH INSIGHTS
+# FILE 11 / 11 — ui/payment.py
+# ============================================================
 
-    page = sidebar_nav()
-    main_router(page)
+from __future__ import annotations
+
+import streamlit as st
+
+from core.session import (
+    mark_user_as_paid,
+)
 
 
-if __name__ == "__main__":
-    run_app()
+# ============================================================
+# PAYMENT UI (DEMO + STRIPE-READY)
+# ============================================================
+
+def render_payment() -> None:
+    """
+    Paywall screen.
+    Blocks demo features until user upgrades.
+    """
+
+    st.markdown("## 💎 Upgrade to Katta Wealth Pro")
+
+    st.markdown(
+        """
+        ### What you unlock:
+        - 📊 Full portfolio analytics
+        - 🧬 ETF look-through exposure
+        - 💵 Dividend income engine
+        - 🎯 Monte Carlo goal probability
+        - 🧠 AI explanations & chatbot
+        - 🚨 Risk & drawdown alerts
+        - 📤 Exportable reports
+        """
+    )
+
+    st.markdown("---")
+
+    col1, col2 = st.columns([2, 1])
+
+    with col1:
+        st.markdown(
+            """
+            **Pro Plan**
+            - $24 / month  
+            - Cancel anytime  
+            - Educational, no advice
+            """
+        )
+
+    with col2:
+        if st.button("💳 Upgrade Now (Demo)", key="paywall_upgrade_btn"):
+            # Demo-only unlock
+            mark_user_as_paid()
+            st.success("Welcome to Pro 🎉")
+            st.rerun()
+
+    st.caption(
+        "⚠️ This is a demo paywall. Stripe Checkout can be enabled later "
+        "with no architectural changes."
+    )
