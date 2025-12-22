@@ -334,84 +334,46 @@ import streamlit as st
 # TOP NAVIGATION BAR
 # ============================================================
 
-def render_top_nav() -> None:
-    """
-    Always-visible top navigation bar.
-    This is the ONLY place where app_mode is changed.
-    """
+def render_top_nav():
+    if st.session_state.get("_top_nav_rendered"):
+        return
+    st.session_state["_top_nav_rendered"] = True
 
     st.markdown(
         """
         <style>
-        .kwi-top-nav {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 0.75rem 2rem;
-            border-bottom: 1px solid #1f2933;
-            background-color: #0b0f19;
-            margin-bottom: 1.5rem;
-        }
-
-        .kwi-brand {
-            font-weight: 800;
-            font-size: 1.15rem;
-            color: #e5e7eb;
-        }
-
-        .kwi-nav-buttons button {
-            background: none;
-            border: 1px solid #374151;
-            color: #e5e7eb;
-            padding: 0.35rem 0.9rem;
-            border-radius: 0.5rem;
-            font-weight: 600;
-            margin-left: 0.6rem;
-            cursor: pointer;
-        }
-
-        .kwi-nav-buttons button:hover {
-            border-color: #6366f1;
-            color: #c7d2fe;
+        .top-nav {
+            display:flex;
+            justify-content:space-between;
+            align-items:center;
+            padding:0.8rem 2rem;
+            border-bottom:1px solid #222;
         }
         </style>
         """,
         unsafe_allow_html=True,
     )
 
-    left, right = st.columns([3, 7])
+    cols = st.columns([3, 7])
 
-    # --------------------------------------------------------
-    # BRAND
-    # --------------------------------------------------------
-    with left:
-        st.markdown(
-            "<div class='kwi-brand'>💎 Katta Wealth Insights</div>",
-            unsafe_allow_html=True,
-        )
+    with cols[0]:
+        st.markdown("### 💎 Katta Wealth Insights")
 
-    # --------------------------------------------------------
-    # NAVIGATION BUTTONS
-    # --------------------------------------------------------
-    with right:
-        cols = st.columns(5)
+    with cols[1]:
+        nav_cols = st.columns(5)
+        labels = ["About Us", "Features", "How It Works", "Benefits", "Demo"]
 
-        labels = [
-            ("About Us", "about"),
-            ("Features", "features"),
-            ("How It Works", "how_it_works"),
-            ("Benefits", "benefits"),
-            ("Demo", "demo"),
-        ]
-
-        for i, (label, mode) in enumerate(labels):
-            if cols[i].button(label, key=f"top_nav_{mode}"):
-                st.session_state.app_mode = mode
+        for i, label in enumerate(labels):
+            if nav_cols[i].button(
+                label,
+                key=f"topnav_{label.replace(' ', '_').lower()}"
+            ):
+                if label == "Demo":
+                    st.session_state.app_mode = "demo"
+                else:
+                    st.session_state.app_mode = label.lower().replace(" ", "_")
                 st.rerun()
-# ============================================================
-# KATTA WEALTH INSIGHTS
-# FILE 4 / 9 — core/routing.py
-# ============================================================
+==========================================
 
 from __future__ import annotations
 
