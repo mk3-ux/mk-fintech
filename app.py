@@ -659,6 +659,42 @@ def build_portfolio_insights_context(
 # ============================================================
 # PART 4 / 5 — SIDEBAR NAVIGATION & PAGE ROUTER
 # ============================================================
+PRO_PAGES.extend([
+    "Portfolio Health",
+    "What-If Simulator",
+    "AI Rebalancing",
+    "Income Forecast",
+    "Risk Alerts",
+    "Teen Explainer",
+    "Factor Exposure",
+    "Goal Probability",
+    "Market Commentary",
+    "Tax Optimization",
+])
+
+FREE_PAGES.append("About Us")
+elif is_pro() and page == "Portfolio Health":
+    render_portfolio_health_ai()
+elif is_pro() and page == "What-If Simulator":
+    render_what_if_ai()
+elif is_pro() and page == "AI Rebalancing":
+    render_ai_rebalancing()
+elif is_pro() and page == "Income Forecast":
+    render_income_forecast_ai()
+elif is_pro() and page == "Risk Alerts":
+    render_risk_alerts_ai()
+elif is_pro() and page == "Teen Explainer":
+    render_teen_explainer_ai()
+elif is_pro() and page == "Factor Exposure":
+    render_factor_exposure_ai()
+elif is_pro() and page == "Goal Probability":
+    render_goal_probability_ai()
+elif is_pro() and page == "Market Commentary":
+    render_market_commentary_ai()
+elif is_pro() and page == "Tax Optimization":
+    render_tax_optimization_ai()
+elif page == "About Us":
+    render_about_us()
 
 # ============================================================
 # 17) FEATURE REGISTRY (AUTHORITATIVE)
@@ -1108,3 +1144,170 @@ def render_advisor_letter():
         }
         letter = advisor_letter_ai(ctx)
         st.text_area("Advisor Letter", letter, height=300)
+# ============================================================
+# PART 6 — AI CORE (GROQ) + PRO FEATURE EXPANSION
+# ============================================================
+
+_groq_client = None
+
+def ai(prompt: str) -> str:
+    global _groq_client
+
+    if not is_pro():
+        return "🔒 This AI feature is available in Pro."
+
+    if Groq is None or not GROQ_API_KEY:
+        return "AI is not configured."
+
+    if _groq_client is None:
+        _groq_client = Groq(api_key=GROQ_API_KEY)
+
+    resp = _groq_client.chat.completions.create(
+        model=MODEL_NAME,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are a financial education AI. "
+                    "No investment advice. Explain clearly."
+                )
+            },
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.4,
+        max_tokens=800,
+    )
+    return resp.choices[0].message.content.strip()
+# ============================================================
+# PART 7 — PRO AI FEATURES (ADDITIVE)
+# ============================================================
+
+def render_portfolio_health_ai():
+    st.header("🧠 Portfolio Health Score")
+
+    h = st.session_state.get("portfolio")
+    if h is None:
+        st.info("Upload a portfolio first.")
+        return
+
+    score = max(30, min(95, int(100 - abs(h.loc["TOTAL", "PnL"]) / max(h.loc["TOTAL", "Market Value"],1) * 100)))
+    st.metric("Health Score", f"{score} / 100")
+
+    st.markdown(ai(
+        f"Explain what a portfolio health score of {score} means "
+        f"for a long-term investor."
+    ))
+
+
+def render_what_if_ai():
+    st.header("📉 What-If Scenario Simulator")
+
+    shock = st.slider("Market shock (%)", -50, 10, -20)
+    port = st.session_state["portfolio"]
+    impact = round(port.loc["TOTAL","Market Value"] * shock / 100, 2)
+
+    st.metric("Estimated Impact", f"${impact}")
+    st.markdown(ai(
+        f"If markets fall {shock}%, explain what typically happens "
+        f"to diversified portfolios."
+    ))
+
+
+def render_ai_rebalancing():
+    st.header("⚖️ AI Rebalancing Suggestions")
+    ctx = build_portfolio_insights_context(st.session_state["portfolio"])
+    st.markdown(ai(
+        "Analyze this portfolio and suggest educational rebalancing ideas:\n\n"
+        + safe_json(ctx)
+    ))
+
+
+def render_income_forecast_ai():
+    st.header("💵 Income Forecast")
+
+    port = st.session_state["portfolio"]
+    income = round(port.loc["TOTAL","Market Value"] * 0.025, 2)
+
+    st.metric("Estimated Annual Income", f"${income}")
+    st.markdown(ai(
+        f"Explain dividend income investing using an annual income "
+        f"of ${income}."
+    ))
+
+
+def render_risk_alerts_ai():
+    st.header("🚨 Risk Alerts (Educational)")
+    draw = st.slider("Alert if drawdown exceeds (%)", 5, 40, 15)
+    st.markdown(ai(
+        f"Explain why monitoring a {draw}% drawdown is important "
+        f"for risk management."
+    ))
+
+
+def render_teen_explainer_ai():
+    st.header("🎓 Explain My Portfolio (Teen Mode)")
+    ctx = build_portfolio_insights_context(st.session_state["portfolio"])
+    st.markdown(ai(
+        "Explain this portfolio to a high-school student "
+        "interested in finance:\n\n" + safe_json(ctx)
+    ))
+
+
+def render_factor_exposure_ai():
+    st.header("📊 Factor Exposure (AI)")
+    st.markdown(ai(
+        "Explain value, growth, and momentum exposure in simple terms "
+        "for a beginner investor."
+    ))
+
+
+def render_goal_probability_ai():
+    st.header("🎯 Goal Probability (AI)")
+    st.markdown(ai(
+        "Explain how investors estimate the probability of reaching "
+        "long-term financial goals."
+    ))
+
+
+def render_market_commentary_ai():
+    st.header("📰 AI Market Commentary")
+    st.markdown(ai(
+        "Write a short daily market commentary for retail investors."
+    ))
+
+
+def render_tax_optimization_ai():
+    st.header("🧾 AI Tax Optimization (Educational)")
+    st.markdown(ai(
+        "Explain tax-efficient investing strategies at a high level "
+        "without giving advice."
+    ))
+# ============================================================
+# PART 8 — ABOUT US
+# ============================================================
+
+def render_about_us():
+    st.header("👤 About Me")
+
+    # Place your image file in the same folder as app.py
+    # Name it: profile.jpg
+    try:
+        st.image("profile.jpg", width=220)
+    except Exception:
+        st.info("Add profile.jpg to your project folder.")
+
+    st.markdown("""
+### 👋 Hi, I’m a Student at **St. Mark’s School**
+
+I’m deeply interested in **finance, investing, and markets**, and I built  
+**Katta Wealth Insights** to learn how professionals analyze portfolios,
+risk, and long-term financial goals.
+
+This platform combines:
+- 📊 Real financial data  
+- 🧠 AI-driven insights  
+- 🎓 Education-first explanations  
+
+My goal is to make investing concepts **clear, practical, and accessible** —
+especially for students and young investors exploring finance seriously.
+""")
