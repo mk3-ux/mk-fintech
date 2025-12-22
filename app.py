@@ -603,11 +603,13 @@ def sidebar_nav() -> str:
         st.caption(f"User: {st.session_state.current_user}")
         st.caption(f"Plan: {'Pro' if is_pro() else 'Free'}")
 
-        page = st.radio(
-            "Go to",
-            allowed_pages(),
-            index=0,
-        )
+    page = st.radio(
+        "Go to",
+        allowed_pages(),
+        index=0,
+        key="main_sidebar_nav",   # ← ADD THIS
+    )
+
 
         st.markdown("---")
 
@@ -777,15 +779,61 @@ def main():
         return
 
     flush_alerts()
-
     page = sidebar_nav()
 
     # -------- FREE --------
+    if page == "Market Scenario":
+        render_market_scenario()
 
+    elif page == "Portfolio Analyzer":
+        render_portfolio_analyzer()
 
-if __name__ == "__main__":
-    main()
-# =========
+    elif page == "Live Stocks":
+        render_live_stocks()
+
+    elif page == "Stock Research":
+        render_stock_research()
+
+    # -------- PRO --------
+    elif is_pro() and page == "Portfolio Tracker":
+        render_portfolio_tracker()
+
+    elif is_pro() and page == "Dividend Tracker":
+        render_dividend_tracker()
+
+    elif is_pro() and page == "Stock Screener":
+        render_stock_screener()
+
+    elif is_pro() and page == "Portfolio Health":
+        render_portfolio_health_ai()
+
+    elif is_pro() and page == "What-If Simulator":
+        render_what_if_ai()
+
+    elif is_pro() and page == "AI Rebalancing":
+        render_ai_rebalancing()
+
+    elif is_pro() and page == "Income Forecast":
+        render_income_forecast_ai()
+
+    elif is_pro() and page == "Risk Alerts":
+        render_risk_alerts_ai()
+
+    elif is_pro() and page == "Teen Explainer":
+        render_teen_explainer_ai()
+
+    elif is_pro() and page == "Factor Exposure":
+        render_factor_exposure_ai()
+
+    elif is_pro() and page == "Goal Probability":
+        render_goal_probability_ai()
+
+    elif is_pro() and page == "Market Commentary":
+        render_market_commentary_ai()
+
+    elif is_pro() and page == "Tax Optimization":
+        render_tax_optimization_ai()
+
 ===================================================
 # 22) PERFORMANCE & RISK
 # ============================================================
