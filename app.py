@@ -814,31 +814,31 @@ def render_dividend_tracker():
     st.header("Dividend Tracker")
 
     ticker = st.text_input("Dividend Ticker", "MSFT").upper().strip()
+
+    # --------------------
+    # 📊 DATA SECTION
+    # --------------------
     df = get_dividend_history(ticker)
 
     if df.empty:
         st.info("No dividend data available.")
         return
 
-    # ✅ Ensure Date is datetime (naive)
-    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.tz_localize(None)
     df = df.dropna(subset=["Date"])
 
-    # ✅ FIX: make cutoff timezone-naive
     cutoff = pd.Timestamp.now().tz_localize(None) - pd.DateOffset(years=1)
 
     last_year = df[df["Date"] >= cutoff]
 
+    # --------------------
+    # 🖥️ UI SECTION
+    # --------------------
     st.subheader("Recent Dividends")
     st.dataframe(df.tail(12), use_container_width=True)
 
     total = float(last_year["Dividend"].sum()) if not last_year.empty else 0.0
-
-    st.metric(
-        "Trailing 12-Month Dividend",
-        f"${round(total, 2)}"
-    )
-
+    st.metric("Trailing 12-Month Dividend", f"${round(total, 2)}")
 
 def render_stock_screener():
     st.header("Stock Screener")
