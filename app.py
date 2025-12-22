@@ -69,6 +69,8 @@ st.set_page_config(
 
 @st.cache_data(ttl=3600)
 def get_dividend_history(ticker: str) -> pd.DataFrame:
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+
     if yf is None:
         return pd.DataFrame()
 
