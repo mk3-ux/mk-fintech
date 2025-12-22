@@ -810,7 +810,7 @@ def render_portfolio_tracker():
             f"${round(holdings.loc['TOTAL', 'PnL'], 2)}",
         )
 
-ddef render_dividend_tracker():
+def render_dividend_tracker():
     st.header("Dividend Tracker")
 
     ticker = st.text_input("Dividend Ticker", "MSFT").upper().strip()
