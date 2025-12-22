@@ -60,6 +60,45 @@ st.set_page_config(
 # SESSION STATE
 # ============================================================
 
+# ============================================================
+# DIVIDEND DATA HELPERS (REQUIRED)
+# ============================================================
+
+@st.cache_data(ttl=3600)
+def get_dividend_history(ticker: str) -> pd.DataFrame:
+    """
+    Fetch dividend history using yfinance.
+    Safe fallback if unavailable.
+    """
+    if yf is None:
+        return pd.DataFrame()
+
+    try:
+        divs = yf.Ticker(ticker).dividends
+
+        if divs is None or divs.empty:
+            return pd.DataFrame()
+
+        df = divs.reset_index()
+        df.columns = ["Date", "Dividend"]
+        return df
+
+    except Exception:
+        return pd.DataFrame()
+
+
+def annual_dividend(div_df: pd.DataFrame) -> float:
+    """
+    Calculate trailing 12-month dividend.
+    """
+    if div_df.empty:
+        return 0.0
+
+    one_year_ago = pd.Timestamp.now() - pd.DateOffset(years=1)
+    recent = div_df[div_df["Date"] >= one_year_ago]
+
+    return round(float(recent["Dividend"].sum()), 2)
+
 def init_session() -> None:
     defaults = {
         "current_user": None,
