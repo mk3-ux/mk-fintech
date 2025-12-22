@@ -1,5 +1,5 @@
 # ============================================================
-# KATTA WEALTH INSIGHTS — FULL APP (PART 1 / 5)
+# KATTA WEALTH INSIGHTS — FULL APP (PART 1 / 6)
 # Core setup, config, session, utilities
 # ============================================================
 
@@ -118,10 +118,6 @@ def safe_json(obj: Any) -> str:
         return json.dumps(obj, indent=2, default=str)
     except Exception:
         return str(obj)
-# ============================================================
-# PART 2 / 5 — COOKIES, SQLITE, AUTH, PRO LOGIC
-# ============================================================
-
 # ============================================================
 # 3) OPTIONAL COOKIES (SAFE FALLBACK)
 # ============================================================
@@ -296,7 +292,7 @@ def db_set_usage(email: str, uses: int) -> None:
 
 
 # ============================================================
-# 6) TIER / PRO LOGIC (AUTHORITATIVE)
+# 6) TIER / PRO LOGIC
 # ============================================================
 
 def effective_tier() -> str:
@@ -318,20 +314,16 @@ def is_pro() -> bool:
 # ============================================================
 # 7) AUTO LOGIN (COOKIE)
 # ============================================================
+
 def upgrade_current_user_to_pro():
     email = st.session_state.current_user
     if not email:
         return
-
     if DB_OK:
         conn = _db_connect()
-        conn.execute(
-            "UPDATE users SET tier='Pro' WHERE email=?",
-            (email,)
-        )
+        conn.execute("UPDATE users SET tier='Pro' WHERE email=?", (email,))
         conn.commit()
         conn.close()
-
     st.session_state.tier = "Pro"
 
 def auto_login() -> None:
@@ -369,9 +361,7 @@ def auth_ui() -> None:
             if not email or not pw:
                 st.error("Missing email or password.")
                 return
-
             pw_h = hash_pw(pw)
-
             if DB_OK:
                 user = db_get_user(email)
                 if user and user["pw"] == pw_h:
@@ -392,16 +382,11 @@ def auth_ui() -> None:
             if not email or not pw:
                 st.error("Missing email or password.")
                 return
-
             ok = db_create_user(email, hash_pw(pw))
             if ok:
                 st.success("Account created. Please log in.")
             else:
                 st.error("Account already exists.")
-# ============================================================
-# PART 3 / 5 — CORE FEATURES (NO UI ROUTING YET)
-# ============================================================
-
 # ============================================================
 # 9) MARKET SCENARIO
 # ============================================================
@@ -482,6 +467,7 @@ def get_live_price(ticker: str) -> Dict[str, Any]:
 
         last = float(hist["Close"].iloc[-1])
         open_ = float(hist["Open"].iloc[0])
+
         return {
             "price": round(last, 2),
             "change": round(last - open_, 2),
@@ -514,8 +500,8 @@ def compute_portfolio_holdings(df: pd.DataFrame) -> pd.DataFrame:
     rows = []
 
     for _, r in df.iterrows():
-        t = str(r["Ticker"]).upper().strip()
-        live = get_live_price(t)
+        ticker = str(r["Ticker"]).upper().strip()
+        live = get_live_price(ticker)
         if live["price"] is None:
             continue
 
@@ -525,7 +511,7 @@ def compute_portfolio_holdings(df: pd.DataFrame) -> pd.DataFrame:
         pnl = value - (shares * cost)
 
         rows.append({
-            "Ticker": t,
+            "Ticker": ticker,
             "Shares": shares,
             "Live Price": live["price"],
             "Market Value": round(value, 2),
@@ -575,170 +561,6 @@ def get_stock_fundamentals(ticker: str) -> Dict[str, Any]:
         }
     except Exception:
         return {}
-
-
-# ============================================================
-# 14) DIVIDEND TRACKER (PRO)
-# ============================================================
-
-@st.cache_data(ttl=3600)
-def get_dividend_history(ticker: str) -> pd.DataFrame:
-    if yf is None:
-        return pd.DataFrame()
-
-    try:
-        divs = yf.Ticker(ticker).dividends
-        if divs is None or divs.empty:
-            return pd.DataFrame()
-        df = divs.reset_index()
-        df.columns = ["Date", "Dividend"]
-        return df
-    except Exception:
-        return pd.DataFrame()
-
-
-def annual_dividend(div_df: pd.DataFrame) -> float:
-    if div_df.empty:
-        return 0.0
-    last_year = div_df[
-        div_df["Date"] >= (pd.Timestamp.now() - pd.DateOffset(years=1))
-    ]
-    return round(float(last_year["Dividend"].sum()), 2)
-
-
-# ============================================================
-# 15) STOCK SCREENER (PRO)
-# ============================================================
-
-def screen_stocks(
-    tickers: List[str],
-    max_pe: float = 25.0,
-    min_div_yield: float = 0.0,
-) -> pd.DataFrame:
-    rows = []
-
-    for t in tickers:
-        f = get_stock_fundamentals(t)
-        if not f:
-            continue
-
-        pe = f.get("PE Ratio")
-        dy = f.get("Dividend Yield") or 0
-
-        if pe is not None and pe <= max_pe and dy >= min_div_yield:
-            rows.append(f)
-
-    return pd.DataFrame(rows)
-
-
-# ============================================================
-# 16) AI PORTFOLIO CONTEXT BUILDER
-# ============================================================
-
-def build_portfolio_insights_context(
-    holdings_df: pd.DataFrame,
-    fundamentals_df: Optional[pd.DataFrame] = None,
-) -> Dict[str, Any]:
-    ctx = {"positions": []}
-
-    if holdings_df is not None and not holdings_df.empty:
-        ctx["total_value"] = float(holdings_df.loc["TOTAL", "Market Value"])
-        ctx["total_pnl"] = float(holdings_df.loc["TOTAL", "PnL"])
-
-        for _, r in holdings_df.drop(index="TOTAL", errors="ignore").iterrows():
-            ctx["positions"].append({
-                "ticker": r["Ticker"],
-                "market_value": r["Market Value"],
-                "pnl": r["PnL"],
-            })
-
-    if fundamentals_df is not None and not fundamentals_df.empty:
-        ctx["fundamentals"] = fundamentals_df.to_dict(orient="records")
-
-    return ctx
-# ============================================================
-# PART 4 / 5 — SIDEBAR NAVIGATION & PAGE ROUTER
-# ============================================================
-PRO_PAGES.extend([
-    "Portfolio Health",
-    "What-If Simulator",
-    "AI Rebalancing",
-    "Income Forecast",
-    "Risk Alerts",
-    "Teen Explainer",
-    "Factor Exposure",
-    "Goal Probability",
-    "Market Commentary",
-    "Tax Optimization",
-])
-
-FREE_PAGES.append("About Us")
-# ============================================================
-# MAIN ROUTER — FIXED VERSION
-# ============================================================
-
-if page == "Market Scenario":
-    render_market_scenario()
-
-elif page == "Portfolio Analyzer":
-    render_portfolio_analyzer()
-
-elif page == "Live Stocks":
-    render_live_stocks()
-
-elif page == "Stock Research":
-    render_stock_research()
-
-# ---------------- PRO FEATURES ----------------
-
-elif is_pro() and page == "Portfolio Tracker":
-    render_portfolio_tracker()
-
-elif is_pro() and page == "Dividend Tracker":
-    render_dividend_tracker()
-
-elif is_pro() and page == "Stock Screener":
-    render_stock_screener()
-
-elif is_pro() and page == "Portfolio Health":
-    render_portfolio_health_ai()
-
-elif is_pro() and page == "What-If Simulator":
-    render_what_if_ai()
-
-elif is_pro() and page == "AI Rebalancing":
-    render_ai_rebalancing()
-
-elif is_pro() and page == "Income Forecast":
-    render_income_forecast_ai()
-
-elif is_pro() and page == "Risk Alerts":
-    render_risk_alerts_ai()
-
-elif is_pro() and page == "Teen Explainer":
-    render_teen_explainer_ai()
-
-elif is_pro() and page == "Factor Exposure":
-    render_factor_exposure_ai()
-
-elif is_pro() and page == "Goal Probability":
-    render_goal_probability_ai()
-
-elif is_pro() and page == "Market Commentary":
-    render_market_commentary_ai()
-
-elif is_pro() and page == "Tax Optimization":
-    render_tax_optimization_ai()
-
-# ---------------- FREE ----------------
-
-elif page == "About Us":
-    render_about_us()
-
-else:
-    st.info("Select a feature from the left menu.")
-
-
 # ============================================================
 # 17) FEATURE REGISTRY (AUTHORITATIVE)
 # ============================================================
@@ -754,7 +576,18 @@ PRO_PAGES = [
     "Portfolio Tracker",
     "Dividend Tracker",
     "Stock Screener",
+    "Portfolio Health",
+    "What-If Simulator",
+    "AI Rebalancing",
+    "Income Forecast",
+    "Risk Alerts",
+    "Teen Explainer",
+    "Factor Exposure",
+    "Goal Probability",
+    "Market Commentary",
+    "Tax Optimization",
 ]
+
 
 def allowed_pages() -> List[str]:
     return FREE_PAGES + PRO_PAGES if is_pro() else FREE_PAGES
@@ -786,6 +619,7 @@ def sidebar_nav() -> str:
             st.session_state.tier = "Free"
             cookie_clear_user()
             st.rerun()
+
         if not is_pro():
             if st.button("💎 Upgrade to Pro (Demo)"):
                 upgrade_current_user_to_pro()
@@ -796,7 +630,7 @@ def sidebar_nav() -> str:
 
 
 # ============================================================
-# 19) PAGE RENDERERS (CENTER CONTENT)
+# 19) PAGE RENDERERS — FREE
 # ============================================================
 
 def render_market_scenario():
@@ -860,6 +694,10 @@ def render_stock_research():
     if data:
         st.json(data)
 
+
+# ============================================================
+# 20) PAGE RENDERERS — PRO
+# ============================================================
 
 def render_portfolio_tracker():
     st.header("Portfolio Tracker")
@@ -930,7 +768,7 @@ def render_stock_screener():
 
 
 # ============================================================
-# 20) MAIN ROUTER
+# 21) MAIN ROUTER (ONLY ONE — CORRECT)
 # ============================================================
 
 def main():
@@ -942,7 +780,7 @@ def main():
 
     page = sidebar_nav()
 
-    # ---------- FREE ----------
+    # -------- FREE --------
     if page == "Market Scenario":
         render_market_scenario()
 
@@ -955,7 +793,7 @@ def main():
     elif page == "Stock Research":
         render_stock_research()
 
-    # ---------- PRO ----------
+    # -------- PRO --------
     elif is_pro() and page == "Portfolio Tracker":
         render_portfolio_tracker()
 
@@ -969,11 +807,7 @@ def main():
 if __name__ == "__main__":
     main()
 # ============================================================
-# PART 5 / 5 — ADVANCED FEATURES
-# ============================================================
-
-# ============================================================
-# 21) PERFORMANCE & RISK
+# 22) PERFORMANCE & RISK
 # ============================================================
 
 @st.cache_data(ttl=3600)
@@ -1016,27 +850,34 @@ def render_performance_risk():
     holdings = st.session_state["portfolio"]
 
     tickers = holdings["Ticker"].dropna().unique()
-    combined = []
+    returns_list = []
 
     for t in tickers:
         prices = get_price_history(t)
         returns = compute_returns(prices)
-        combined.append(returns)
+        returns_list.append(returns)
 
-    if not combined:
+    if not returns_list:
         st.info("Not enough data.")
         return
 
-    port_returns = pd.concat(combined, axis=1).mean(axis=1)
-    st.metric("Volatility (Annualized)", portfolio_volatility(port_returns))
-    st.metric("Max Drawdown", max_drawdown((1 + port_returns).cumprod()))
+    portfolio_returns = pd.concat(returns_list, axis=1).mean(axis=1)
+
+    st.metric("Volatility (Annualized)", portfolio_volatility(portfolio_returns))
+    st.metric(
+        "Max Drawdown",
+        max_drawdown((1 + portfolio_returns).cumprod())
+    )
 
 
 # ============================================================
-# 22) BACKTESTING
+# 23) BACKTESTING
 # ============================================================
 
-def backtest_portfolio(holdings_df: pd.DataFrame, period: str = "3y") -> pd.DataFrame:
+def backtest_portfolio(
+    holdings_df: pd.DataFrame,
+    period: str = "3y"
+) -> pd.DataFrame:
     if yf is None or holdings_df.empty:
         return pd.DataFrame()
 
@@ -1063,7 +904,7 @@ def render_backtesting():
 
 
 # ============================================================
-# 23) WATCHLIST
+# 24) WATCHLIST
 # ============================================================
 
 def get_watchlist(email: str) -> List[str]:
@@ -1076,6 +917,7 @@ def get_watchlist(email: str) -> List[str]:
         (email,),
     ).fetchone()
     conn.close()
+
     return json.loads(row[0]) if row else []
 
 
@@ -1086,7 +928,8 @@ def save_watchlist(email: str, tickers: List[str]) -> None:
 
     conn = _db_connect()
     conn.execute(
-        "INSERT OR REPLACE INTO artifacts(id,email,kind,payload_json,created_at) "
+        "INSERT OR REPLACE INTO artifacts "
+        "(id, email, kind, payload_json, created_at) "
         "VALUES (?,?,?,?,?)",
         (str(uuid.uuid4()), email, "watchlist", json.dumps(tickers), now_iso()),
     )
@@ -1112,7 +955,7 @@ def render_watchlist():
 
 
 # ============================================================
-# 24) GOALS
+# 25) GOAL PLANNING
 # ============================================================
 
 def goal_projection(
@@ -1140,7 +983,7 @@ def render_goals():
 
 
 # ============================================================
-# 25) TAXES
+# 26) TAX ESTIMATOR
 # ============================================================
 
 def estimate_capital_gains_tax(
@@ -1162,195 +1005,317 @@ def render_taxes():
 
     tax = estimate_capital_gains_tax(st.session_state["portfolio"])
     st.metric("Estimated Capital Gains Tax", f"${tax}")
-
-
 # ============================================================
-# 26) ADVISOR LETTER (AI)
-# ============================================================
-
-def advisor_letter_ai(context: Dict[str, Any]) -> str:
-    prompt = (
-        "Write a professional advisor letter summarizing performance, "
-        "risk, and outlook. No investment advice.\n\n"
-        + safe_json(context)
-    )
-    return ai(prompt)
-
-
-def render_advisor_letter():
-    st.header("Advisor Letter")
-
-    if st.button("Generate Advisor Letter"):
-        ctx = {
-            "portfolio": st.session_state.get("portfolio"),
-            "client": st.session_state.get("client"),
-        }
-        letter = advisor_letter_ai(ctx)
-        st.text_area("Advisor Letter", letter, height=300)
-# ============================================================
-# PART 6 — AI CORE (GROQ) + PRO FEATURE EXPANSION
+# 27) AI CORE — GROQ CLIENT
 # ============================================================
 
 _groq_client = None
 
+
 def ai(prompt: str) -> str:
+    """
+    Central AI helper for all AI-powered features.
+    Pro-only, educational, no investment advice.
+    """
     global _groq_client
 
     if not is_pro():
         return "🔒 This AI feature is available in Pro."
 
     if Groq is None or not GROQ_API_KEY:
-        return "AI is not configured."
+        return "⚠️ AI is not configured. Missing GROQ_API_KEY."
 
     if _groq_client is None:
         _groq_client = Groq(api_key=GROQ_API_KEY)
 
-    resp = _groq_client.chat.completions.create(
-        model=MODEL_NAME,
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are a financial education AI. "
-                    "No investment advice. Explain clearly."
-                )
-            },
-            {"role": "user", "content": prompt},
-        ],
-        temperature=0.4,
-        max_tokens=800,
-    )
-    return resp.choices[0].message.content.strip()
+    try:
+        resp = _groq_client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a financial education AI. "
+                        "Do not provide investment advice. "
+                        "Explain concepts clearly and responsibly."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": prompt,
+                },
+            ],
+            temperature=0.4,
+            max_tokens=800,
+        )
+
+        return resp.choices[0].message.content.strip()
+
+    except Exception as e:
+        return f"AI error: {str(e)}"
 # ============================================================
-# PART 7 — PRO AI FEATURES (ADDITIVE)
+# 28) PORTFOLIO HEALTH (AI)
 # ============================================================
 
 def render_portfolio_health_ai():
     st.header("🧠 Portfolio Health Score")
 
-    h = st.session_state.get("portfolio")
-    if h is None:
+    portfolio = st.session_state.get("portfolio")
+    if portfolio is None or portfolio.empty:
         st.info("Upload a portfolio first.")
         return
 
-    score = max(30, min(95, int(100 - abs(h.loc["TOTAL", "PnL"]) / max(h.loc["TOTAL", "Market Value"],1) * 100)))
+    total_value = portfolio.loc["TOTAL", "Market Value"]
+    total_pnl = portfolio.loc["TOTAL", "PnL"]
+
+    score = max(
+        30,
+        min(
+            95,
+            int(100 - abs(total_pnl) / max(total_value, 1) * 100),
+        ),
+    )
+
     st.metric("Health Score", f"{score} / 100")
 
-    st.markdown(ai(
-        f"Explain what a portfolio health score of {score} means "
-        f"for a long-term investor."
-    ))
+    st.markdown(
+        ai(
+            f"Explain what a portfolio health score of {score} means "
+            f"for a long-term investor."
+        )
+    )
 
+
+# ============================================================
+# 29) WHAT-IF SIMULATOR (AI)
+# ============================================================
 
 def render_what_if_ai():
     st.header("📉 What-If Scenario Simulator")
 
+    portfolio = st.session_state.get("portfolio")
+    if portfolio is None or portfolio.empty:
+        st.info("Upload a portfolio first.")
+        return
+
     shock = st.slider("Market shock (%)", -50, 10, -20)
-    port = st.session_state["portfolio"]
-    impact = round(port.loc["TOTAL","Market Value"] * shock / 100, 2)
+    impact = round(
+        portfolio.loc["TOTAL", "Market Value"] * shock / 100,
+        2,
+    )
 
     st.metric("Estimated Impact", f"${impact}")
-    st.markdown(ai(
-        f"If markets fall {shock}%, explain what typically happens "
-        f"to diversified portfolios."
-    ))
 
+    st.markdown(
+        ai(
+            f"If markets fall {shock}%, explain what typically happens "
+            f"to diversified portfolios."
+        )
+    )
+
+
+# ============================================================
+# 30) AI REBALANCING
+# ============================================================
 
 def render_ai_rebalancing():
     st.header("⚖️ AI Rebalancing Suggestions")
-    ctx = build_portfolio_insights_context(st.session_state["portfolio"])
-    st.markdown(ai(
-        "Analyze this portfolio and suggest educational rebalancing ideas:\n\n"
-        + safe_json(ctx)
-    ))
 
+    portfolio = st.session_state.get("portfolio")
+    if portfolio is None or portfolio.empty:
+        st.info("Upload a portfolio first.")
+        return
+
+    ctx = build_portfolio_insights_context(portfolio)
+
+    st.markdown(
+        ai(
+            "Analyze this portfolio and suggest educational "
+            "rebalancing ideas (no advice):\n\n"
+            + safe_json(ctx)
+        )
+    )
+
+
+# ============================================================
+# 31) INCOME FORECAST (AI)
+# ============================================================
 
 def render_income_forecast_ai():
     st.header("💵 Income Forecast")
 
-    port = st.session_state["portfolio"]
-    income = round(port.loc["TOTAL","Market Value"] * 0.025, 2)
+    portfolio = st.session_state.get("portfolio")
+    if portfolio is None or portfolio.empty:
+        st.info("Upload a portfolio first.")
+        return
+
+    income = round(
+        portfolio.loc["TOTAL", "Market Value"] * 0.025,
+        2,
+    )
 
     st.metric("Estimated Annual Income", f"${income}")
-    st.markdown(ai(
-        f"Explain dividend income investing using an annual income "
-        f"of ${income}."
-    ))
 
+    st.markdown(
+        ai(
+            f"Explain dividend income investing using an estimated "
+            f"annual income of ${income}."
+        )
+    )
+
+
+# ============================================================
+# 32) RISK ALERTS (AI)
+# ============================================================
 
 def render_risk_alerts_ai():
     st.header("🚨 Risk Alerts (Educational)")
-    draw = st.slider("Alert if drawdown exceeds (%)", 5, 40, 15)
-    st.markdown(ai(
-        f"Explain why monitoring a {draw}% drawdown is important "
-        f"for risk management."
-    ))
 
+    drawdown = st.slider(
+        "Alert if drawdown exceeds (%)",
+        5,
+        40,
+        15,
+    )
+
+    st.markdown(
+        ai(
+            f"Explain why monitoring a {drawdown}% drawdown "
+            f"is important for risk management."
+        )
+    )
+
+
+# ============================================================
+# 33) TEEN MODE EXPLAINER (AI)
+# ============================================================
 
 def render_teen_explainer_ai():
     st.header("🎓 Explain My Portfolio (Teen Mode)")
-    ctx = build_portfolio_insights_context(st.session_state["portfolio"])
-    st.markdown(ai(
-        "Explain this portfolio to a high-school student "
-        "interested in finance:\n\n" + safe_json(ctx)
-    ))
 
+    portfolio = st.session_state.get("portfolio")
+    if portfolio is None or portfolio.empty:
+        st.info("Upload a portfolio first.")
+        return
+
+    ctx = build_portfolio_insights_context(portfolio)
+
+    st.markdown(
+        ai(
+            "Explain this portfolio to a high-school student "
+            "who is interested in finance:\n\n"
+            + safe_json(ctx)
+        )
+    )
+
+
+# ============================================================
+# 34) FACTOR EXPOSURE (AI)
+# ============================================================
 
 def render_factor_exposure_ai():
     st.header("📊 Factor Exposure (AI)")
-    st.markdown(ai(
-        "Explain value, growth, and momentum exposure in simple terms "
-        "for a beginner investor."
-    ))
 
+    st.markdown(
+        ai(
+            "Explain value, growth, and momentum exposure "
+            "in simple terms for a beginner investor."
+        )
+    )
+
+
+# ============================================================
+# 35) GOAL PROBABILITY (AI)
+# ============================================================
 
 def render_goal_probability_ai():
     st.header("🎯 Goal Probability (AI)")
-    st.markdown(ai(
-        "Explain how investors estimate the probability of reaching "
-        "long-term financial goals."
-    ))
 
+    st.markdown(
+        ai(
+            "Explain how investors estimate the probability of "
+            "reaching long-term financial goals."
+        )
+    )
+
+
+# ============================================================
+# 36) MARKET COMMENTARY (AI)
+# ============================================================
 
 def render_market_commentary_ai():
     st.header("📰 AI Market Commentary")
-    st.markdown(ai(
-        "Write a short daily market commentary for retail investors."
-    ))
 
+    st.markdown(
+        ai(
+            "Write a short daily market commentary for "
+            "retail investors."
+        )
+    )
+
+
+# ============================================================
+# 37) TAX OPTIMIZATION (AI)
+# ============================================================
 
 def render_tax_optimization_ai():
     st.header("🧾 AI Tax Optimization (Educational)")
-    st.markdown(ai(
-        "Explain tax-efficient investing strategies at a high level "
-        "without giving advice."
-    ))
+
+    st.markdown(
+        ai(
+            "Explain tax-efficient investing strategies "
+            "at a high level without giving advice."
+        )
+    )
 # ============================================================
-# PART 8 — ABOUT US
+# 38) OPTIONAL DEBUG PANEL (DEV ONLY)
 # ============================================================
 
-def render_about_us():
-    st.header("👤 About Me")
+def render_debug_panel():
+    if not DEV_MODE:
+        return
 
-    # Place your image file in the same folder as app.py
-    # Name it: profile.jpg
-    try:
-        st.image("profile.jpg", width=220)
-    except Exception:
-        st.info("Add profile.jpg to your project folder.")
+    with st.expander("🛠 Debug Panel"):
+        st.write("Session State:")
+        st.json({k: str(v) for k, v in st.session_state.items()})
 
-    st.markdown("""
-### 👋 Hi, I’m a Student at **St. Mark’s School**
 
-I’m deeply interested in **finance, investing, and markets**, and I built  
-**Katta Wealth Insights** to learn how professionals analyze portfolios,
-risk, and long-term financial goals.
+# ============================================================
+# 39) FINAL SAFETY CHECKS
+# ============================================================
 
-This platform combines:
-- 📊 Real financial data  
-- 🧠 AI-driven insights  
-- 🎓 Education-first explanations  
+def ensure_portfolio_totals():
+    """
+    Ensures TOTAL row exists for portfolio-based features.
+    Prevents runtime errors in AI & analytics layers.
+    """
+    port = st.session_state.get("portfolio")
+    if port is None or port.empty:
+        return
 
-My goal is to make investing concepts **clear, practical, and accessible** —
-especially for students and young investors exploring finance seriously.
-""")
+    if "TOTAL" not in port.index and "Market Value" in port.columns:
+        port.loc["TOTAL", "Market Value"] = port["Market Value"].sum()
+        if "PnL" in port.columns:
+            port.loc["TOTAL", "PnL"] = port["PnL"].sum()
+
+
+# ============================================================
+# 40) APP ENTRYPOINT GUARD
+# ============================================================
+
+def run_app():
+    """
+    Single safe entrypoint.
+    Ensures no duplicate execution and clean startup.
+    """
+    ensure_portfolio_totals()
+    main()
+    render_debug_panel()
+
+
+# ============================================================
+# 41) EXECUTION
+# ============================================================
+
+if __name__ == "__main__":
+    run_app()
