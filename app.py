@@ -312,6 +312,22 @@ def db_set_usage(email: str, uses: int) -> None:
     )
     conn.commit()
     conn.close()
+def upgrade_current_user_to_pro():
+    """
+    Upgrades the currently logged-in user to Pro.
+    Demo-only (no Stripe).
+    """
+    email = st.session_state.current_user
+    if not email:
+        return
+
+    # Update database
+    if DB_OK:
+        db_set_tier(email, "Pro")
+
+    # Update session immediately
+    st.session_state.tier = "Pro"
+
 
 def db_set_tier(email: str, tier: str) -> None:
     if not DB_OK:
