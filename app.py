@@ -584,6 +584,7 @@ PRO_PAGES = [
     "Goal Probability",
     "Market Commentary",
     "Tax Optimization",
+    "AI Chatbot",
 ]
 
 def allowed_pages() -> List[str]:
@@ -1278,6 +1279,62 @@ def render_tax_optimization_ai():
         )
     )
 # ============================================================
+# AI CHATBOT (PRO)
+# ============================================================
+
+def render_ai_chatbot():
+    st.header("💬 AI Chatbot")
+
+    st.caption(
+        "Ask questions about investing, portfolios, markets, or concepts. "
+        "Educational only — no investment advice."
+    )
+
+    # Initialize chat history
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
+
+    # Display chat history
+    for msg in st.session_state.chat_history:
+        if msg["role"] == "user":
+            st.markdown(f"**You:** {msg['content']}")
+        else:
+            st.markdown(f"**AI:** {msg['content']}")
+
+    # User input
+    user_input = st.text_input("Type your question", key="chat_input")
+
+    if st.button("Send") and user_input:
+        # Save user message
+        st.session_state.chat_history.append(
+            {"role": "user", "content": user_input}
+        )
+
+        # Build context-aware prompt
+        portfolio = st.session_state.get("portfolio")
+        context = ""
+
+        if portfolio is not None and not portfolio.empty:
+            context = (
+                "User portfolio context:\n"
+                + safe_json(build_portfolio_insights_context(portfolio))
+                + "\n\n"
+            )
+
+        ai_response = ai(
+            context
+            + "User question:\n"
+            + user_input
+        )
+
+        # Save AI response
+        st.session_state.chat_history.append(
+            {"role": "assistant", "content": ai_response}
+        )
+
+        st.rerun()
+
+# ============================================================
 # PART 8 / 8 — MAIN ROUTER & APP ENTRYPOINT
 # ============================================================
 
@@ -1299,6 +1356,10 @@ def main_router(page: str) -> None:
 
     elif page == "Stock Research":
         render_stock_research()
+
+    elif page == "AI Chatbot":
+    render_ai_chatbot()
+
 
     # ---------------- PRO FEATURES (NON-AI) ----------------
     elif is_pro() and page == "Portfolio Tracker":
