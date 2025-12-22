@@ -611,7 +611,7 @@ def sidebar_nav() -> str:
     )
 
 
-        st.markdown("---")
+    st.markdown("---")
 
         if not is_pro():
             st.info("🔒 Upgrade to Pro to unlock advanced features")
