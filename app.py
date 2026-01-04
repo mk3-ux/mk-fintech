@@ -13,6 +13,27 @@ import math
 import json
 from dataclasses import dataclass
 from typing import Dict, Any, List, Optional
+# ============================================================
+# AUTHORITATIVE SESSION INITIALIZATION (MUST EXIST)
+# ============================================================
+
+def init_session():
+    defaults = {
+        "app_mode": "about",
+        "current_user": None,
+        "is_paid": False,
+        "portfolio_df": None,
+        "portfolio_raw": None,
+        "portfolio_meta": {},
+        "chat_history": [],
+    }
+
+    for k, v in defaults.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
+
+
+
 
 # ============================================================
 # STREAMLIT CONFIG (MUST BE FIRST STREAMLIT CALL)
@@ -1135,7 +1156,10 @@ def route_app():
     # ---------------------------
     # INIT (SAFE)
     # ---------------------------
-    init_session()
+    try:
+        init_session()
+    except NameError:
+        pass
 
     # ---------------------------
     # TOP NAV (ALWAYS)
