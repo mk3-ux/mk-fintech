@@ -29,9 +29,8 @@ st.set_page_config(
 # ============================================================
 
 def init_session():
-   
     defaults = {
-        "app_mode": "about",          # about | demo
+        "app_mode": "about",
         "current_user": None,
         "is_paid": False,
         "portfolio_raw": None,
@@ -44,6 +43,7 @@ def init_session():
     for k, v in defaults.items():
         if k not in st.session_state:
             st.session_state[k] = v
+
 
 def legal_section(title: str, body: str):
     st.markdown(
@@ -587,16 +587,21 @@ def render_payment():
 # AUTH + PAYMENT GATE
 # ------------------------------------------------------------
 
-def enforce_auth_and_payment() -> bool:
-    if not st.session_state.current_user:
+def enforce_auth_and_payment():
+    # SAFE access — never assume key exists
+    current_user = st.session_state.get("current_user")
+    is_paid = st.session_state.get("is_paid", False)
+
+    if not current_user:
         render_auth()
         return False
 
-    if not st.session_state.is_paid:
+    if not is_paid:
         render_payment()
         return False
 
     return True
+
 # ============================================================
 # PART 5 / 12 — DEMO SIDEBAR + DEMO ROUTER
 # ============================================================
