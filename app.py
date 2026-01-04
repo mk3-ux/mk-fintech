@@ -17,6 +17,10 @@ from typing import Dict, Any, List, Optional
 # AUTHORITATIVE SESSION INITIALIZATION (MUST EXIST)
 # ============================================================
 
+# ============================================================
+# CRITICAL: AUTHORITATIVE SESSION INITIALIZATION
+# ============================================================
+
 def init_session():
     defaults = {
         "app_mode": "about",
@@ -26,11 +30,12 @@ def init_session():
         "portfolio_raw": None,
         "portfolio_meta": {},
         "chat_history": [],
+        "snapshots": [],
     }
 
-    for k, v in defaults.items():
-        if k not in st.session_state:
-            st.session_state[k] = v
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
 
 
 
@@ -1153,46 +1158,54 @@ def render_demo_router(page: str):
 
 
 def route_app():
-    # ---------------------------
-    # INIT (SAFE)
-    # ---------------------------
-    try:
+    # --------------------------------------------------------
+    # SAFE SESSION INIT (NEVER FAILS)
+    # --------------------------------------------------------
+    if "app_mode" not in st.session_state:
         init_session()
-    except NameError:
-        pass
 
-    # ---------------------------
-    # TOP NAV (ALWAYS)
-    # ---------------------------
+    # --------------------------------------------------------
+    # TOP NAV
+    # --------------------------------------------------------
     render_top_nav()
 
     mode = st.session_state.get("app_mode", "about")
 
-    # ---------------------------
-    # MARKETING / INFO
-    # ---------------------------
-    if mode in {"about", "features", "how", "benefits", "legal", "deploy"}:
-        render_marketing_router(mode)
-        render_legal_always_on()
-        return
+    # --------------------------------------------------------
+    # MARKETING PAGES
+    # --------------------------------------------------------
+    if mode == "about":
+        render_about()
 
-    # ---------------------------
-    # DEMO (AUTH + PAYWALL)
-    # ---------------------------
-    if mode == "demo":
+    elif mode == "features":
+        render_features()
+
+    elif mode == "how":
+        render_how()
+
+    elif mode == "benefits":
+        render_benefits()
+
+    elif mode == "legal":
+        render_about_us_legal()
+
+    # --------------------------------------------------------
+    # DEMO MODE
+    # --------------------------------------------------------
+    elif mode == "demo":
         if not enforce_auth_and_paywall():
             render_legal_always_on()
             return
 
         page = render_sidebar()
         render_demo_router(page)
-        render_legal_always_on()
-        return
 
-    # ---------------------------
-    # FALLBACK
-    # ---------------------------
-    render_about()
+    else:
+        render_about()
+
+    # --------------------------------------------------------
+    # ALWAYS-ON LEGAL (MANDATORY)
+    # --------------------------------------------------------
     render_legal_always_on()
 
 
