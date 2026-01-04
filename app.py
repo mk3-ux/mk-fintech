@@ -1882,3 +1882,86 @@ def generate_chat_response(question: str) -> str:
         "I can explain portfolios, diversification, risk, goals, "
         "ETFs, and long-term investing concepts."
     )
+# ============================================================
+# PART 14 / 14 — FINAL ROUTER & ENTRYPOINT
+# ============================================================
+
+def route_app():
+    """
+    SINGLE authoritative router.
+    - Top navigation ALWAYS visible
+    - Legal banner + expander ALWAYS visible
+    - Safe routing between marketing, legal, and demo
+    """
+
+    # ---------------------------
+    # TOP NAVIGATION (ALWAYS)
+    # ---------------------------
+    render_top_nav()
+
+    mode = st.session_state.get("app_mode", "about")
+
+    # ---------------------------
+    # MARKETING / INFO PAGES
+    # ---------------------------
+    if mode == "about":
+        render_about()
+
+    elif mode == "features":
+        render_features()
+
+    elif mode == "how":
+        render_how()
+
+    elif mode == "benefits":
+        render_benefits()
+
+    elif mode == "legal":
+        render_about_us_legal()
+
+    # ---------------------------
+    # DEMO MODE (AUTH + PAYWALL)
+    # ---------------------------
+    elif mode == "demo":
+
+        if not enforce_auth_and_payment():
+            # Even when blocked, legal MUST render
+            render_legal_expander()
+            render_legal_banner()
+            return
+
+        page = render_sidebar()
+
+        # Primary demo router
+        demo_router(page)
+
+        # Extended educational features
+        if page == "Learning Notes":
+            render_learning_notes()
+        elif page == "Scenario Comparison":
+            render_scenario_comparison()
+        elif page == "Snapshots":
+            render_portfolio_snapshots()
+        elif page == "Settings":
+            render_settings()
+        elif page == "Learning Checklist":
+            render_learning_checklist()
+
+    # ---------------------------
+    # FALLBACK (SAFE)
+    # ---------------------------
+    else:
+        render_about()
+
+    # ---------------------------
+    # ALWAYS-VISIBLE LEGAL (MANDATORY)
+    # ---------------------------
+    render_legal_expander()
+    render_legal_banner()
+
+
+# ============================================================
+# SINGLE ENTRYPOINT (ONLY ONE — NEVER DUPLICATE)
+# ============================================================
+
+route_app()
