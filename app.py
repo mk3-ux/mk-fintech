@@ -53,7 +53,6 @@ if __name__ == "__main__":
 # FILE 2 / 9 — core/session.py
 # ============================================================
 
-from __future__ import annotations
 
 import os
 import sqlite3
