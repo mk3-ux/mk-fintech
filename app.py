@@ -861,10 +861,12 @@ def render_portfolio_overview():
     st.header("📊 Portfolio Overview")
 
     st.download_button(
-        "Download CSV Template",
-        portfolio_template_csv(),
+        label="Download CSV Template",
+        data=portfolio_template_csv(),
         file_name="portfolio_template.csv",
+        key="download_portfolio_template",
     )
+
 
     uploaded = st.file_uploader(
         "Upload Portfolio CSV",
