@@ -1,6 +1,6 @@
 # ============================================================
 # KATTA WEALTH INSIGHTS — SINGLE FILE STREAMLIT APP
-# PART 1 / 8 — CONFIG, SESSION, DATABASE
+# PART 1 / 12 — CONFIG, IMPORTS, SESSION, DATABASE, SECURITY
 # ============================================================
 
 import streamlit as st
@@ -11,6 +11,8 @@ import hashlib
 import datetime as dt
 import io
 import math
+import random
+from typing import Dict, Any, List
 
 # ============================================================
 # STREAMLIT CONFIG (MUST BE FIRST STREAMLIT CALL)
@@ -23,104 +25,166 @@ st.set_page_config(
 )
 
 # ============================================================
-# SESSION INITIALIZATION
+# SESSION INITIALIZATION (AUTHORITATIVE)
 # ============================================================
 
 def init_session():
     defaults = {
-        "app_mode": "about",          # about | demo
-        "current_user": None,
-        "is_paid": False,
-        "portfolio_raw": None,
-        "portfolio": None,
-        "portfolio_meta": {},
-        "chat_history": [],
-        "alerts": [],
-    }
-    for k, v in defaults.items():
-        st.session_state.setdefault(k, v)
-
-init_session()
-
+        # Routing
+        "app_mode": "about",   # about | features | how | benefits |_
 # ============================================================
-# DATABASE (SQLITE — LOCAL, SAFE)
+# PART 2 / 12 — ABOUT US + LEGAL / COMPLIANCE (ALWAYS AVAILABLE)
 # ============================================================
 
-DB_PATH = "kwi_app.db"
+# ------------------------------------------------------------
+# LEGAL SECTION HELPER
+# ------------------------------------------------------------
 
-def db_connect():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.execute("PRAGMA journal_mode=WAL;")
-    return conn
-
-def db_init():
-    conn = db_connect()
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            email TEXT PRIMARY KEY,
-            pw_hash TEXT NOT NULL,
-            is_paid INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL
-        );
-    """)
-    conn.commit()
-    conn.close()
-
-db_init()
-
-# ============================================================
-# SECURITY HELPERS
-# ============================================================
-
-def now_iso():
-    return dt.datetime.utcnow().isoformat()
-
-def hash_pw(pw: str) -> str:
-    return hashlib.sha256(("kwi_salt_" + pw).encode()).hexdigest()
-
-# ============================================================
-# AUTH HELPERS
-# ============================================================
-
-def db_get_user(email):
-    conn = db_connect()
-    row = conn.execute(
-        "SELECT email, pw_hash, is_paid FROM users WHERE email=?",
-        (email,),
-    ).fetchone()
-    conn.close()
-    if not row:
-        return None
-    return {"email": row[0], "pw": row[1], "is_paid": bool(row[2])}
-
-def db_create_user(email, pw_hash):
-    try:
-        conn = db_connect()
-        conn.execute(
-            "INSERT INTO users VALUES (?,?,?,?)",
-            (email, pw_hash, 0, now_iso()),
-        )
-        conn.commit()
-        conn.close()
-        return True
-    except Exception:
-        return False
-
-def mark_user_paid(email):
-    conn = db_connect()
-    conn.execute(
-        "UPDATE users SET is_paid=1 WHERE email=?",
-        (email,),
+def legal_section(title: str, body: str):
+    st.markdown(
+        f"""
+        <div style="margin-top:1.5rem;">
+            <h3>{title}</h3>
+            <p style="font-size:0.95rem; color:#d1d5db; line-height:1.6;">
+                {body}
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
-    conn.commit()
-    conn.close()
+
+
+# ------------------------------------------------------------
+# ABOUT US + LEGAL DISCLOSURES (FULL TEXT)
+# ------------------------------------------------------------
+
+def render_about_us_legal():
+    st.markdown("## 💎 About Katta Wealth Insights")
+
+    st.markdown(
+        """
+        **Katta Wealth Insights** is an education-first financial analytics platform
+        designed to help users understand portfolios, diversification, risk,
+        and long-term investing concepts through visual tools and simulations.
+        """
+    )
+
+    legal_section(
+        "Educational Purpose Only",
+        """
+        Katta Wealth Insights is provided strictly for **educational and informational purposes**.
+        The platform is intended to help users learn about general investing concepts,
+        portfolio construction, diversification, and long-term planning.
+        """
+    )
+
+    legal_section(
+        "Not Financial, Investment, Tax, or Legal Advice",
+        """
+        Nothing on this platform constitutes **financial advice, investment advice,
+        tax advice, or legal advice**.
+        Katta Wealth Insights is **not** a registered investment adviser, broker-dealer,
+        or financial planner.
+        """
+    )
+
+    legal_section(
+        "No Fiduciary Relationship",
+        """
+        Use of this platform does **not** create a fiduciary, advisory,
+        or client relationship of any kind.
+        All decisions based on information from this platform
+        are made solely at the user’s discretion and risk.
+        """
+    )
+
+    legal_section(
+        "Risk Disclosure",
+        """
+        Investing involves risk, including the possible loss of principal.
+        Past performance, simulations, projections, or hypothetical results
+        do **not** guarantee future outcomes.
+        """
+    )
+
+    legal_section(
+        "Simulations & Hypothetical Results",
+        """
+        Monte Carlo simulations and forecasts shown on this platform
+        are **hypothetical in nature**.
+        They rely on assumptions that may not reflect real-world conditions
+        and should not be relied upon as predictions or guarantees.
+        """
+    )
+
+    legal_section(
+        "Data Accuracy & Sources",
+        """
+        Any financial data used may be derived from public,
+        third-party, or user-provided sources.
+        Katta Wealth Insights does **not guarantee accuracy,
+        completeness, or timeliness** of any data.
+        """
+    )
+
+    legal_section(
+        "User Responsibility",
+        """
+        Users are encouraged to consult qualified professionals
+        before making financial decisions.
+        By using this platform, you acknowledge that you assume
+        full responsibility for your actions.
+        """
+    )
+
+    st.markdown("---")
+    st.caption(
+        "© Katta Wealth Insights — Educational platform only. "
+        "No advice. No guarantees."
+    )
+
+
+# ------------------------------------------------------------
+# GLOBAL LEGAL BANNER (ALWAYS SHOWN)
+# ------------------------------------------------------------
+
+def render_legal_banner():
+    st.markdown(
+        """
+        <div style="
+            background:#111827;
+            border-top:1px solid #374151;
+            padding:0.6rem 1rem;
+            font-size:0.8rem;
+            color:#9ca3af;
+            text-align:center;
+            margin-top:2rem;
+        ">
+            Educational use only · No financial, tax, or legal advice ·
+            No guarantees · Investing involves risk
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+# ------------------------------------------------------------
+# GLOBAL LEGAL EXPANDER (ALWAYS AVAILABLE)
+# ------------------------------------------------------------
+
+def render_legal_expander():
+    with st.expander(
+        "ℹ️ About, Legal & Disclosures (Always Available)",
+        expanded=False,
+    ):
+        render_about_us_legal()
 # ============================================================
-# PART 2 / 8 — TOP NAVIGATION + MARKETING PAGES
+# PART 3 / 12 — TOP NAVIGATION + MARKETING PAGES
 # ============================================================
 
-# ============================================================
+# ------------------------------------------------------------
 # TOP NAVIGATION (GLOBAL)
-# ============================================================
+# ------------------------------------------------------------
 
 def render_top_nav():
     st.markdown(
@@ -147,28 +211,33 @@ def render_top_nav():
     c1, c2 = st.columns([3, 7])
 
     with c1:
-        st.markdown("<div class='kwi-brand'>💎 Katta Wealth Insights</div>",
-                    unsafe_allow_html=True)
+        st.markdown(
+            "<div class='kwi-brand'>💎 Katta Wealth Insights</div>",
+            unsafe_allow_html=True,
+        )
 
     with c2:
-        nav = st.columns(5)
+        nav = st.columns(6)
         buttons = [
             ("About", "about"),
             ("Features", "features"),
             ("How It Works", "how"),
             ("Benefits", "benefits"),
+            ("About & Legal", "legal"),
             ("Demo", "demo"),
         ]
+
         for i, (label, mode) in enumerate(buttons):
             if nav[i].button(label, use_container_width=True):
                 st.session_state.app_mode = mode
                 st.rerun()
 
-# ============================================================
-# MARKETING HELPERS
-# ============================================================
 
-def marketing_header(title, subtitle, icon=""):
+# ------------------------------------------------------------
+# MARKETING PAGE HELPERS
+# ------------------------------------------------------------
+
+def marketing_header(title: str, subtitle: str, icon: str = ""):
     st.markdown(
         f"""
         <div style="padding:2rem 0;">
@@ -181,20 +250,24 @@ def marketing_header(title, subtitle, icon=""):
         unsafe_allow_html=True,
     )
 
-def marketing_section(title, body):
+
+def marketing_section(title: str, body: str):
     st.markdown(
         f"""
         <div style="margin-top:2rem;">
             <h3>{title}</h3>
-            <p style="color:#e5e7eb;">{body}</p>
+            <p style="color:#e5e7eb;">
+                {body}
+            </p>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-# ============================================================
+
+# ------------------------------------------------------------
 # ABOUT PAGE
-# ============================================================
+# ------------------------------------------------------------
 
 def render_about():
     marketing_header(
@@ -205,24 +278,34 @@ def render_about():
 
     marketing_section(
         "Our Mission",
-        "To help families, students, and long-term investors "
-        "understand portfolios without hype, fear, or complexity."
+        """
+        To help families, students, and long-term investors
+        understand portfolios, diversification, and risk
+        without hype, fear, or complexity.
+        """,
     )
 
     marketing_section(
         "What This Is",
-        "An educational analytics tool. No trading. No advice. "
-        "Just understanding."
+        """
+        An educational analytics platform.
+        No trading. No execution. No recommendations.
+        """,
     )
 
     marketing_section(
         "Who It’s For",
-        "• Families<br>• Students & teens<br>• Long-term investors"
+        """
+        • Families learning together<br>
+        • Students & teens<br>
+        • Long-term investors
+        """,
     )
 
-# ============================================================
+
+# ------------------------------------------------------------
 # FEATURES PAGE
-# ============================================================
+# ------------------------------------------------------------
 
 def render_features():
     marketing_header(
@@ -233,27 +316,28 @@ def render_features():
 
     marketing_section(
         "Portfolio Analytics",
-        "Upload once and instantly see value, P&L, and diversification."
+        "Upload once and instantly see value, P&L, and diversification.",
     )
 
     marketing_section(
         "ETF Look-Through",
-        "Understand what you really own inside ETFs."
+        "Understand what you really own inside ETFs.",
     )
 
     marketing_section(
         "Goal Probability",
-        "Monte Carlo simulations estimate long-term success odds."
+        "Monte Carlo simulations estimate long-term success odds.",
     )
 
     marketing_section(
         "AI-Style Insights",
-        "Plain-English explanations for risk and rebalancing."
+        "Plain-English explanations for risk and rebalancing.",
     )
 
-# ============================================================
+
+# ------------------------------------------------------------
 # HOW IT WORKS PAGE
-# ============================================================
+# ------------------------------------------------------------
 
 def render_how():
     marketing_header(
@@ -262,14 +346,30 @@ def render_how():
         "🛠️",
     )
 
-    marketing_section("1. Upload", "Upload a CSV of your investments.")
-    marketing_section("2. Analyze", "We compute risk, value, and income.")
-    marketing_section("3. Learn", "Explore insights visually and clearly.")
-    marketing_section("4. Grow", "Iterate and learn over time.")
+    marketing_section(
+        "1. Upload",
+        "Upload a CSV of your investments using a simple template.",
+    )
 
-# ============================================================
+    marketing_section(
+        "2. Analyze",
+        "We compute value, diversification, income, and risk.",
+    )
+
+    marketing_section(
+        "3. Explore",
+        "Interact with simulations and visual explanations.",
+    )
+
+    marketing_section(
+        "4. Learn",
+        "Designed for education and long-term understanding.",
+    )
+
+
+# ------------------------------------------------------------
 # BENEFITS PAGE
-# ============================================================
+# ------------------------------------------------------------
 
 def render_benefits():
     marketing_header(
@@ -280,25 +380,114 @@ def render_benefits():
 
     marketing_section(
         "Clarity Over Noise",
-        "Understand investing without media-driven fear."
+        "Understand investing without media-driven fear.",
     )
 
     marketing_section(
         "Education First",
-        "Designed for students and long-term thinking."
+        "Built for students, families, and long-term thinkers.",
     )
 
     marketing_section(
         "Safe & Transparent",
-        "No execution, no leverage, no advice."
+        "No execution, no leverage, no financial advice.",
     )
 # ============================================================
-# PART 3 / 8 — AUTHENTICATION + PAYWALL
+# PART 4 / 12 — AUTHENTICATION + PAYWALL
 # ============================================================
 
-# ============================================================
+# ------------------------------------------------------------
+# DATABASE HELPERS (AUTH)
+# ------------------------------------------------------------
+
+DB_PATH = "kwi_app.db"
+
+def db_connect():
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.execute("PRAGMA journal_mode=WAL;")
+    return conn
+
+
+def db_init():
+    conn = db_connect()
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            email TEXT PRIMARY KEY,
+            pw_hash TEXT NOT NULL,
+            is_paid INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL
+        );
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
+db_init()
+
+
+# ------------------------------------------------------------
+# SECURITY HELPERS
+# ------------------------------------------------------------
+
+def now_iso():
+    return dt.datetime.utcnow().isoformat()
+
+
+def hash_pw(pw: str) -> str:
+    return hashlib.sha256(("kwi_salt_" + pw).encode()).hexdigest()
+
+
+# ------------------------------------------------------------
+# USER HELPERS
+# ------------------------------------------------------------
+
+def db_get_user(email: str):
+    conn = db_connect()
+    row = conn.execute(
+        "SELECT email, pw_hash, is_paid FROM users WHERE email=?",
+        (email,),
+    ).fetchone()
+    conn.close()
+
+    if not row:
+        return None
+
+    return {
+        "email": row[0],
+        "pw": row[1],
+        "is_paid": bool(row[2]),
+    }
+
+
+def db_create_user(email: str, pw_hash: str) -> bool:
+    try:
+        conn = db_connect()
+        conn.execute(
+            "INSERT INTO users VALUES (?,?,?,?)",
+            (email, pw_hash, 0, now_iso()),
+        )
+        conn.commit()
+        conn.close()
+        return True
+    except Exception:
+        return False
+
+
+def mark_user_paid(email: str):
+    conn = db_connect()
+    conn.execute(
+        "UPDATE users SET is_paid=1 WHERE email=?",
+        (email,),
+    )
+    conn.commit()
+    conn.close()
+
+
+# ------------------------------------------------------------
 # AUTH UI
-# ============================================================
+# ------------------------------------------------------------
 
 def render_auth():
     st.header("🔐 Sign in to Katta Wealth Insights")
@@ -346,9 +535,10 @@ def render_auth():
 
             st.success("Account created. Please log in.")
 
-# ============================================================
+
+# ------------------------------------------------------------
 # PAYWALL UI
-# ============================================================
+# ------------------------------------------------------------
 
 def render_payment():
     st.header("💎 Upgrade to Katta Wealth Pro")
@@ -387,11 +577,12 @@ def render_payment():
             st.success("Welcome to Pro 🎉")
             st.rerun()
 
-# ============================================================
-# AUTH / PAYMENT GATE
-# ============================================================
 
-def enforce_auth_and_payment():
+# ------------------------------------------------------------
+# AUTH + PAYMENT GATE
+# ------------------------------------------------------------
+
+def enforce_auth_and_payment() -> bool:
     if not st.session_state.current_user:
         render_auth()
         return False
@@ -402,12 +593,12 @@ def enforce_auth_and_payment():
 
     return True
 # ============================================================
-# PART 4 / 8 — DEMO SIDEBAR + ROUTER
+# PART 5 / 12 — DEMO SIDEBAR + DEMO ROUTER
 # ============================================================
 
-# ============================================================
-# DEMO SIDEBAR
-# ============================================================
+# ------------------------------------------------------------
+# DEMO SIDEBAR (LEFT NAV)
+# ------------------------------------------------------------
 
 def render_sidebar():
     with st.sidebar:
@@ -417,7 +608,7 @@ def render_sidebar():
             .kwi-sidebar-title {
                 font-weight:800;
                 font-size:1.1rem;
-                margin-bottom:0.5rem;
+                margin-bottom:0.6rem;
             }
             </style>
             """,
@@ -444,7 +635,8 @@ def render_sidebar():
             "Exports",
         ]
 
-        page = st.radio("",
+        page = st.radio(
+            "",
             pages,
             key="demo_sidebar_page",
         )
@@ -459,11 +651,12 @@ def render_sidebar():
 
     return page
 
-# ============================================================
-# DEMO ROUTER
-# ============================================================
 
-def demo_router(page):
+# ------------------------------------------------------------
+# DEMO ROUTER (PAGE DISPATCHER)
+# ------------------------------------------------------------
+
+def demo_router(page: str):
     if page == "Portfolio Overview":
         render_portfolio_overview()
 
@@ -503,76 +696,95 @@ def demo_router(page):
     else:
         st.info("Select a demo page from the sidebar.")
 # ============================================================
-# PART 5 / 8 — PORTFOLIO ENGINE (UPLOAD, CALCULATION, INSIGHTS)
+# PART 6 / 12 — PORTFOLIO ENGINE
 # ============================================================
 
-# ============================================================
-# PORTFOLIO HELPERS
-# ============================================================
+# ------------------------------------------------------------
+# PORTFOLIO INPUT MODEL
+# ------------------------------------------------------------
 
 REQUIRED_COLUMNS = ["Ticker", "Shares", "Cost_Basis"]
 
+
 def portfolio_template_csv():
-    df = pd.DataFrame({
-        "Ticker": ["AAPL", "MSFT", "NVDA", "VOO"],
-        "Shares": [10, 5, 3, 2],
-        "Cost_Basis": [150, 280, 400, 350],
-    })
+    df = pd.DataFrame(
+        {
+            "Ticker": ["AAPL", "MSFT", "NVDA", "VOO"],
+            "Shares": [10, 5, 3, 2],
+            "Cost_Basis": [150, 280, 400, 350],
+        }
+    )
     return df.to_csv(index=False).encode("utf-8")
 
-def validate_portfolio(df):
+
+def validate_portfolio(df: pd.DataFrame):
     if df.empty:
         return False, "Portfolio is empty."
+
     missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
     if missing:
         return False, f"Missing columns: {', '.join(missing)}"
+
     try:
         df["Shares"] = pd.to_numeric(df["Shares"])
         df["Cost_Basis"] = pd.to_numeric(df["Cost_Basis"])
     except Exception:
         return False, "Shares and Cost_Basis must be numeric."
+
     if (df["Shares"] <= 0).any():
         return False, "Shares must be positive."
+
     return True, "OK"
 
-# ============================================================
-# PORTFOLIO CALCULATION (SIMPLIFIED, OFFLINE-SAFE)
-# ============================================================
 
-def compute_portfolio(df):
+# ------------------------------------------------------------
+# PORTFOLIO CALCULATION (OFFLINE / DEMO SAFE)
+# ------------------------------------------------------------
+
+def compute_portfolio(df: pd.DataFrame) -> pd.DataFrame:
     rows = []
+
     for _, r in df.iterrows():
         ticker = str(r["Ticker"]).upper().strip()
         shares = float(r["Shares"])
         cost = float(r["Cost_Basis"])
 
-        market_value = shares * cost
+        # Demo-safe pricing model (no live calls)
+        live_price = cost
+        market_value = shares * live_price
         pnl = market_value - (shares * cost)
 
-        rows.append({
-            "Ticker": ticker,
-            "Shares": shares,
-            "Live Price": cost,
-            "Market Value": round(market_value, 2),
-            "Cost Basis": round(shares * cost, 2),
-            "PnL": round(pnl, 2),
-        })
+        rows.append(
+            {
+                "Ticker": ticker,
+                "Shares": shares,
+                "Live Price": round(live_price, 2),
+                "Market Value": round(market_value, 2),
+                "Cost Basis": round(shares * cost, 2),
+                "PnL": round(pnl, 2),
+            }
+        )
 
     out = pd.DataFrame(rows)
+
     out.loc["TOTAL", "Market Value"] = out["Market Value"].sum()
     out.loc["TOTAL", "PnL"] = out["PnL"].sum()
+
     return out
 
-# ============================================================
-# ETF LOOK-THROUGH (STATIC DEMO MODEL)
-# ============================================================
+
+# ------------------------------------------------------------
+# ETF LOOK-THROUGH (STATIC EDUCATIONAL MODEL)
+# ------------------------------------------------------------
 
 ETF_LOOKTHROUGH = {
     "VOO": [("AAPL", 0.07), ("MSFT", 0.06), ("NVDA", 0.05)],
     "SPY": [("AAPL", 0.07), ("MSFT", 0.06), ("AMZN", 0.04)],
+    "QQQ": [("AAPL", 0.11), ("MSFT", 0.09), ("NVDA", 0.08)],
 }
 
-def compute_lookthrough(portfolio):
+
+def compute_lookthrough(portfolio: pd.DataFrame) -> pd.DataFrame:
     stocks = []
     total_value = portfolio.loc["TOTAL", "Market Value"]
 
@@ -582,42 +794,58 @@ def compute_lookthrough(portfolio):
 
         if ticker in ETF_LOOKTHROUGH:
             for sym, w in ETF_LOOKTHROUGH[ticker]:
-                stocks.append({"Ticker": sym, "Weight": weight * w})
+                stocks.append(
+                    {"Ticker": sym, "Weight": weight * w}
+                )
         else:
-            stocks.append({"Ticker": ticker, "Weight": weight})
+            stocks.append(
+                {"Ticker": ticker, "Weight": weight}
+            )
 
-    df = pd.DataFrame(stocks).groupby("Ticker").sum().reset_index()
+    df = pd.DataFrame(stocks)
+    df = df.groupby("Ticker").sum().reset_index()
     df["Weight %"] = (df["Weight"] * 100).round(2)
+
     return df.sort_values("Weight %", ascending=False)
 
-# ============================================================
+
+# ------------------------------------------------------------
 # DIVIDEND ENGINE (SIMPLIFIED)
-# ============================================================
+# ------------------------------------------------------------
 
 DIVIDEND_YIELDS = {
     "AAPL": 0.006,
     "MSFT": 0.007,
     "NVDA": 0.001,
     "VOO": 0.015,
+    "SPY": 0.014,
+    "QQQ": 0.012,
 }
 
-def compute_dividends(portfolio):
+
+def compute_dividends(portfolio: pd.DataFrame) -> pd.DataFrame:
     rows = []
+
     for _, r in portfolio.drop(index="TOTAL").iterrows():
         y = DIVIDEND_YIELDS.get(r["Ticker"], 0)
         income = r["Market Value"] * y
-        rows.append({
-            "Ticker": r["Ticker"],
-            "Yield %": round(y * 100, 2),
-            "Annual Income": round(income, 2),
-        })
+
+        rows.append(
+            {
+                "Ticker": r["Ticker"],
+                "Yield %": round(y * 100, 2),
+                "Annual Income": round(income, 2),
+            }
+        )
+
     df = pd.DataFrame(rows)
     df.loc["TOTAL", "Annual Income"] = df["Annual Income"].sum()
     return df
 
-# ============================================================
-# PORTFOLIO PAGES
-# ============================================================
+
+# ------------------------------------------------------------
+# PORTFOLIO OVERVIEW PAGE
+# ------------------------------------------------------------
 
 def render_portfolio_overview():
     st.header("📊 Portfolio Overview")
@@ -628,18 +856,24 @@ def render_portfolio_overview():
         file_name="portfolio_template.csv",
     )
 
-    uploaded = st.file_uploader("Upload Portfolio CSV", type="csv")
+    uploaded = st.file_uploader(
+        "Upload Portfolio CSV",
+        type="csv",
+    )
+
     if not uploaded:
         st.info("Upload a portfolio to continue.")
         return
 
     raw = pd.read_csv(uploaded)
     ok, msg = validate_portfolio(raw)
+
     if not ok:
         st.error(msg)
         return
 
     portfolio = compute_portfolio(raw)
+
     st.session_state.portfolio_raw = raw
     st.session_state.portfolio = portfolio
 
@@ -651,6 +885,11 @@ def render_portfolio_overview():
     st.subheader("Dividend Income")
     st.dataframe(income, use_container_width=True)
 
+
+# ------------------------------------------------------------
+# PORTFOLIO INSIGHTS PAGE
+# ------------------------------------------------------------
+
 def render_portfolio_insights():
     st.header("🧬 Portfolio Insights")
 
@@ -660,39 +899,43 @@ def render_portfolio_insights():
         return
 
     exposure = compute_lookthrough(portfolio)
-    st.subheader("Look-Through Exposure")
+
+    st.subheader("Look-Through Stock Exposure")
     st.dataframe(exposure.head(15), use_container_width=True)
 # ============================================================
-# PART 6 / 8 — GOAL PROBABILITY + MONTE CARLO ENGINE
+# PART 7 / 12 — GOAL PROBABILITY + MONTE CARLO ENGINE
 # ============================================================
 
-# ============================================================
-# GOAL / SIMULATION HELPERS
-# ============================================================
+# ------------------------------------------------------------
+# RETURN & VOLATILITY ESTIMATION (EDUCATIONAL DEFAULTS)
+# ------------------------------------------------------------
 
 def estimate_return_and_volatility():
     """
-    Conservative defaults for long-term planning.
-    These can later be replaced with historical calculations.
+    Conservative long-term assumptions.
+    These are educational defaults, NOT predictions.
     """
-    expected_return = 0.07      # 7%
-    volatility = 0.15           # 15%
+    expected_return = 0.07   # 7% annual
+    volatility = 0.15        # 15% annual
     return expected_return, volatility
 
 
+# ------------------------------------------------------------
+# MONTE CARLO SIMULATION ENGINE
+# ------------------------------------------------------------
+
 def monte_carlo_simulation(
-    start_value,
-    annual_contribution,
-    years,
-    expected_return,
-    volatility,
-    simulations=3000,
+    start_value: float,
+    annual_contribution: float,
+    years: int,
+    expected_return: float,
+    volatility: float,
+    simulations: int = 3000,
 ):
     """
     Monte Carlo simulation of portfolio growth.
-    Returns a numpy array of shape (simulations, years).
+    Returns array shape (simulations, years).
     """
-
     results = np.zeros((simulations, years))
 
     for i in range(simulations):
@@ -705,18 +948,17 @@ def monte_carlo_simulation(
     return results
 
 
-def goal_success_probability(simulations, goal):
+def goal_success_probability(simulations: np.ndarray, goal: float) -> float:
     """
     Percentage of simulations ending above the goal.
     """
     final_values = simulations[:, -1]
-    probability = (final_values >= goal).mean() * 100
-    return round(probability, 2)
+    return round((final_values >= goal).mean() * 100, 2)
 
 
-def simulation_summary(simulations):
+def simulation_summary(simulations: np.ndarray) -> Dict[str, float]:
     """
-    Returns pessimistic / median / optimistic outcomes.
+    Pessimistic / Median / Optimistic outcomes.
     """
     final_values = simulations[:, -1]
     return {
@@ -726,9 +968,9 @@ def simulation_summary(simulations):
     }
 
 
-# ============================================================
+# ------------------------------------------------------------
 # GOAL PROBABILITY PAGE
-# ============================================================
+# ------------------------------------------------------------
 
 def render_goal_probability():
     st.header("🎯 Goal Probability")
@@ -759,7 +1001,12 @@ def render_goal_probability():
         )
 
     with col3:
-        years = st.slider("Years", 1, 40, 20)
+        years = st.slider(
+            "Years",
+            min_value=1,
+            max_value=40,
+            value=20,
+        )
 
     st.markdown("---")
 
@@ -775,9 +1022,10 @@ def render_goal_probability():
 
     probability = goal_success_probability(simulations, goal)
 
-    st.metric("Goal Success Probability", f"{probability}%")
-    st.metric("Expected Return", f"{round(expected_return * 100, 2)}%")
-    st.metric("Volatility", f"{round(volatility * 100, 2)}%")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Goal Success Probability", f"{probability}%")
+    c2.metric("Expected Return", f"{round(expected_return * 100, 2)}%")
+    c3.metric("Volatility", f"{round(volatility * 100, 2)}%")
 
     st.markdown("---")
 
@@ -797,7 +1045,7 @@ def render_goal_probability():
     sample_paths = pd.DataFrame(simulations[:50].T)
     st.line_chart(sample_paths)
 
-    # Persist results for AI / insight usage
+    # Persist results for AI / educational context
     st.session_state.portfolio_meta["goal_analysis"] = {
         "goal": goal,
         "years": years,
@@ -806,12 +1054,12 @@ def render_goal_probability():
         "volatility": volatility,
     }
 # ============================================================
-# PART 7 / 8 — AI-STYLE INSIGHTS, FORECASTS, EXPLAINERS
+# PART 8 / 12 — AI-STYLE INSIGHTS & EDUCATIONAL FEATURES
 # ============================================================
 
-# ============================================================
+# ------------------------------------------------------------
 # PORTFOLIO HEALTH (RULE-BASED AI)
-# ============================================================
+# ------------------------------------------------------------
 
 def render_portfolio_health_ai():
     st.header("🧠 Portfolio Health")
@@ -826,25 +1074,24 @@ def render_portfolio_health_ai():
     weights = holdings["Market Value"] / total_value
 
     max_weight = weights.max()
-    concentration_index = (weights ** 2).sum()
+    concentration_index = float((weights ** 2).sum())
 
     c1, c2 = st.columns(2)
     c1.metric("Largest Holding", f"{round(max_weight * 100, 2)}%")
     c2.metric("Concentration Index", round(concentration_index, 3))
 
     st.markdown("---")
-
     st.subheader("AI Assessment")
 
     if max_weight > 0.4:
         st.warning(
-            "⚠️ Your portfolio is highly concentrated in a single holding. "
-            "This may increase volatility and downside risk."
+            "⚠️ Your portfolio is highly concentrated in one holding. "
+            "This can increase volatility and downside risk."
         )
     elif concentration_index > 0.25:
         st.info(
             "ℹ️ Your portfolio shows moderate concentration. "
-            "Additional diversification could reduce risk."
+            "Additional diversification may reduce risk."
         )
     else:
         st.success(
@@ -852,9 +1099,9 @@ def render_portfolio_health_ai():
         )
 
 
-# ============================================================
+# ------------------------------------------------------------
 # AI REBALANCING SUGGESTIONS
-# ============================================================
+# ------------------------------------------------------------
 
 def render_ai_rebalancing():
     st.header("⚖️ AI Rebalancing Suggestions")
@@ -878,7 +1125,7 @@ def render_ai_rebalancing():
 
     if not suggestions:
         suggestions.append(
-            "Your portfolio weights appear balanced. No immediate action needed."
+            "Your portfolio weights appear balanced. No immediate changes suggested."
         )
 
     st.subheader("Suggested Actions")
@@ -886,9 +1133,9 @@ def render_ai_rebalancing():
         st.markdown(f"- {s}")
 
 
-# ============================================================
-# INCOME FORECAST AI
-# ============================================================
+# ------------------------------------------------------------
+# INCOME FORECAST (DIVIDEND GROWTH MODEL)
+# ------------------------------------------------------------
 
 def render_income_forecast_ai():
     st.header("💵 Income Forecast")
@@ -902,7 +1149,7 @@ def render_income_forecast_ai():
     annual_income = float(df.loc["TOTAL", "Annual Income"])
 
     growth_rate = st.slider(
-        "Assumed Annual Growth (%)",
+        "Assumed Annual Income Growth (%)",
         min_value=0.0,
         max_value=10.0,
         value=4.0,
@@ -926,9 +1173,9 @@ def render_income_forecast_ai():
     st.line_chart(forecast_df.set_index("Year"))
 
 
-# ============================================================
-# TEEN EXPLAINER
-# ============================================================
+# ------------------------------------------------------------
+# TEEN EXPLAINER (STUDENT FRIENDLY)
+# ------------------------------------------------------------
 
 def render_teen_explainer_ai():
     st.header("🎒 Teen Explainer")
@@ -939,7 +1186,8 @@ def render_teen_explainer_ai():
         A **portfolio** is a collection of investments like stocks and ETFs.
 
         ### Why diversify?
-        Diversification spreads risk across many investments.
+        Diversification spreads risk so one bad investment
+        doesn’t ruin everything.
 
         ### What is risk?
         Risk is how much your investment value can go up **or down**.
@@ -950,9 +1198,9 @@ def render_teen_explainer_ai():
     )
 
 
-# ============================================================
-# AI CHATBOT (RULE-BASED)
-# ============================================================
+# ------------------------------------------------------------
+# AI CHATBOT (RULE-BASED, SAFE)
+# ------------------------------------------------------------
 
 def render_ai_chatbot():
     st.header("🤖 AI Chatbot")
@@ -960,7 +1208,7 @@ def render_ai_chatbot():
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
 
-    user_input = st.text_input("Ask a question about your portfolio")
+    user_input = st.text_input("Ask a question about investing or portfolios")
 
     if st.button("Ask"):
         response = generate_chat_response(user_input)
@@ -976,26 +1224,30 @@ def render_ai_chatbot():
         st.markdown("---")
 
 
-def generate_chat_response(question):
+def generate_chat_response(question: str) -> str:
     q = question.lower()
 
     if "risk" in q:
-        return "Risk refers to how much your investment value can fluctuate over time."
+        return "Risk refers to how much investment values can fluctuate over time."
     if "divers" in q:
         return "Diversification means spreading investments to reduce risk."
     if "goal" in q:
-        return "Goal probability estimates how likely you are to reach your target."
+        return "Goal probability estimates how likely you are to reach a target amount."
     if "rebalance" in q:
-        return "Rebalancing helps maintain diversification over time."
+        return "Rebalancing helps keep portfolio risk aligned over time."
+    if "etf" in q:
+        return "ETFs hold many stocks, providing built-in diversification."
 
-    return "I can help explain portfolios, risk, diversification, and long-term goals."
+    return (
+        "I can explain portfolios, diversification, risk, goals, and long-term investing."
+    )
 # ============================================================
-# PART 8 / 8 — RISK, TAX, PERFORMANCE, EXPORTS, MAIN ROUTER
+# PART 9 / 12 — RISK, TAX, PERFORMANCE & EXPORTS
 # ============================================================
 
-# ============================================================
-# RISK ALERTS
-# ============================================================
+# ------------------------------------------------------------
+# RISK ALERTS (EDUCATIONAL)
+# ------------------------------------------------------------
 
 def render_risk_alerts():
     st.header("🚨 Risk Alerts")
@@ -1011,25 +1263,29 @@ def render_risk_alerts():
 
     alerts = []
 
-    for ticker, w in zip(holdings["Ticker"], weights):
-        if w > 0.4:
+    for ticker, weight in zip(holdings["Ticker"], weights):
+        if weight > 0.40:
             alerts.append(
-                f"⚠️ **{ticker}** exceeds 40% of portfolio value."
+                f"⚠️ **{ticker}** represents more than 40% of your portfolio."
             )
 
     if not alerts:
         st.success("✅ No major concentration risks detected.")
     else:
-        for a in alerts:
-            st.warning(a)
+        for alert in alerts:
+            st.warning(alert)
+
+    st.caption(
+        "Risk alerts are informational only and do not constitute investment advice."
+    )
 
 
-# ============================================================
-# TAX OPTIMIZATION
-# ============================================================
+# ------------------------------------------------------------
+# TAX OPTIMIZATION (EDUCATIONAL ONLY)
+# ------------------------------------------------------------
 
 def render_tax_optimization():
-    st.header("🧾 Tax Optimization")
+    st.header("🧾 Tax Optimization (Educational)")
 
     portfolio = st.session_state.get("portfolio")
     if portfolio is None:
@@ -1043,16 +1299,21 @@ def render_tax_optimization():
         st.success("✅ No unrealized losses detected.")
         return
 
-    st.subheader("Potential Tax-Loss Harvesting")
+    st.subheader("Potential Tax-Loss Harvesting (Illustrative)")
     st.dataframe(
         losses[["Ticker", "PnL"]],
         use_container_width=True,
     )
 
+    st.caption(
+        "This section is educational only. "
+        "Consult a qualified tax professional before making decisions."
+    )
 
-# ============================================================
+
+# ------------------------------------------------------------
 # PERFORMANCE SUMMARY
-# ============================================================
+# ------------------------------------------------------------
 
 def render_performance_benchmark():
     st.header("📈 Performance Summary")
@@ -1062,23 +1323,24 @@ def render_performance_benchmark():
         st.info("Upload a portfolio first.")
         return
 
-    total_value = portfolio.loc["TOTAL", "Market Value"]
-    total_pnl = portfolio.loc["TOTAL", "PnL"]
+    total_value = float(portfolio.loc["TOTAL", "Market Value"])
+    total_pnl = float(portfolio.loc["TOTAL", "PnL"])
 
     c1, c2 = st.columns(2)
     c1.metric("Total Portfolio Value", f"${round(total_value, 2)}")
     c2.metric("Total P&L", f"${round(total_pnl, 2)}")
 
     st.markdown("---")
+
     st.caption(
-        "Benchmark comparisons (S&P 500, Nasdaq) can be added later "
-        "without changing this architecture."
+        "Benchmark comparisons (e.g., S&P 500) are not included. "
+        "Performance figures shown are educational snapshots only."
     )
 
 
-# ============================================================
-# EXPORTS
-# ============================================================
+# ------------------------------------------------------------
+# EXPORTS (REPORTING, NOT ADVICE)
+# ------------------------------------------------------------
 
 def render_exports():
     st.header("📤 Exports")
@@ -1093,117 +1355,27 @@ def render_exports():
     csv_bytes = buffer.getvalue().encode("utf-8")
 
     st.download_button(
-        "Download Portfolio CSV",
+        label="Download Portfolio CSV",
         data=csv_bytes,
         file_name="portfolio_report.csv",
         mime="text/csv",
     )
 
     st.caption(
-        "PDF and client-ready exports can be added later "
-        "without refactoring."
+        "Exports are provided for personal learning and record-keeping only."
     )
-
-
 # ============================================================
-# MAIN APPLICATION ROUTER
+# PART 10 / 12 — ALWAYS-VISIBLE LEGAL & ABOUT (MANDATORY)
 # ============================================================
 
-def route_app():
-    render_top_nav()
-
-    mode = st.session_state.app_mode
-
-    # ---------------------------
-    # MARKETING PAGES
-    # ---------------------------
-    if mode == "about":
-        render_about()
-        return
-
-    if mode == "features":
-        render_features()
-        return
-
-    if mode == "how":
-        render_how()
-        return
-
-    if mode == "benefits":
-        render_benefits()
-        return
-
-    # ---------------------------
-    # DEMO MODE
-    # ---------------------------
-    if mode == "demo":
-
-        if not enforce_auth_and_payment():
-            return
-
-        page = render_sidebar()
-        demo_router(page)
-        return
-
-    # Fallback
-    render_about()
-
-
-# ============================================================
-# APP ENTRYPOINT (SINGLE, FINAL)
-# ============================================================
-
-route_app()
 # ------------------------------------------------------------
-# ALWAYS-SHOWN LEGAL CONTENT (GLOBAL)
+# LEGAL SECTION HELPER
 # ------------------------------------------------------------
-render_legal_expander()
-render_legal_banner()
-def route_app():
-    render_top_nav()
 
-    mode = st.session_state.app_mode
-
-    if mode == "about":
-        render_about()
-
-    elif mode == "features":
-        render_features()
-
-    elif mode == "how":
-        render_how()
-
-    elif mode == "benefits":
-        render_benefits()
-
-    elif mode == "legal":
-        render_about_us_legal()
-
-    elif mode == "demo":
-        if not enforce_auth_and_payment():
-            render_legal_expander()
-            render_legal_banner()
-            return
-
-        page = render_sidebar()
-        demo_router(page)
-
-    # ✅ ALWAYS visible, regardless of mode
-    render_legal_expander()
-    render_legal_banner()
-
-# ============================================================
-# PART 9 / 9 — ABOUT US + LEGAL & REGULATORY SAFE DISCLOSURES
-# ============================================================
-
-# ============================================================
-# LEGAL / COMPLIANCE HELPERS
-# ============================================================
-
-def legal_section(title, body):
+def legal_section(title: str, body: str):
     st.markdown(
         f"""
-        <div style="margin-top:1.8rem;">
+        <div style="margin-top:1.6rem;">
             <h3>{title}</h3>
             <p style="font-size:0.95rem; color:#d1d5db; line-height:1.6;">
                 {body}
@@ -1214,9 +1386,9 @@ def legal_section(title, body):
     )
 
 
-# ============================================================
-# ABOUT US + LEGAL PAGE
-# ============================================================
+# ------------------------------------------------------------
+# ABOUT + LEGAL PAGE
+# ------------------------------------------------------------
 
 def render_about_us_legal():
     st.markdown("## 💎 About Katta Wealth Insights")
@@ -1225,7 +1397,7 @@ def render_about_us_legal():
         """
         **Katta Wealth Insights** is an education-first financial analytics platform
         designed to help users understand portfolios, diversification, risk,
-        and long-term investing concepts through visual tools and simulations.
+        and long-term investing concepts using visual tools and simulations.
         """
     )
 
@@ -1233,7 +1405,7 @@ def render_about_us_legal():
         "Educational Purpose Only",
         """
         Katta Wealth Insights is provided strictly for **educational and informational purposes**.
-        The platform is intended to help users learn about general investing concepts,
+        The platform is intended to help users learn general investing concepts,
         portfolio construction, diversification, and long-term planning.
         """
     )
@@ -1243,10 +1415,8 @@ def render_about_us_legal():
         """
         Nothing on this platform constitutes **investment advice, financial advice,
         legal advice, or tax advice**.
-        Katta Wealth Insights is **not a registered investment adviser, broker-dealer,
-        or financial planner**.
-        Any information presented should not be interpreted as a recommendation
-        to buy, sell, or hold any security.
+        Katta Wealth Insights is **not** a registered investment adviser,
+        broker-dealer, or financial planner.
         """
     )
 
@@ -1255,59 +1425,43 @@ def render_about_us_legal():
         """
         Use of this platform does **not** create a fiduciary, advisory,
         or client relationship of any kind.
-        All decisions based on information from this platform
-        are made solely at the user’s discretion and risk.
+        All decisions are made solely at the user’s discretion and risk.
         """
     )
 
     legal_section(
         "Risk Disclosure",
         """
-        Investing involves risk, including the possible loss of principal.
+        Investing involves risk, including possible loss of principal.
         Past performance, simulations, or hypothetical results
         do **not** guarantee future outcomes.
-        Market conditions, economic events, and individual circumstances
-        can materially affect investment results.
         """
     )
 
     legal_section(
         "Simulations & Hypothetical Results",
         """
-        Monte Carlo simulations, projections, and forecasts shown on this platform
-        are **hypothetical in nature**.
+        Monte Carlo simulations and forecasts shown are **hypothetical**.
         They rely on assumptions that may not reflect real-world conditions
-        and should not be relied upon as predictions or guarantees of performance.
+        and should not be relied upon as predictions or guarantees.
         """
     )
 
     legal_section(
-        "Data Sources & Accuracy",
+        "Data Accuracy",
         """
-        Any financial data used within the platform may be derived from public,
-        third-party, or user-provided sources.
-        Katta Wealth Insights does **not guarantee the accuracy, completeness,
-        or timeliness** of any data displayed.
+        Financial data may be derived from public, third-party,
+        or user-provided sources.
+        Accuracy, completeness, and timeliness are not guaranteed.
         """
     )
 
     legal_section(
         "No Solicitation or Endorsement",
         """
-        The platform does not solicit investments, endorse securities,
-        or promote specific financial products.
-        Any examples, tickers, or scenarios are shown solely
-        for illustrative and educational purposes.
-        """
-    )
-
-    legal_section(
-        "Intended Audience",
-        """
-        This platform is intended for **general audiences**, including students,
-        families, and individuals seeking to improve financial literacy.
-        It is not designed for professional trading, high-frequency strategies,
-        or regulated advisory use.
+        The platform does not solicit investments,
+        endorse securities, or promote financial products.
+        Examples and tickers are illustrative only.
         """
     )
 
@@ -1315,72 +1469,78 @@ def render_about_us_legal():
         "User Responsibility",
         """
         Users are encouraged to consult qualified financial,
-        tax, or legal professionals before making financial decisions.
-        By using this platform, you acknowledge that you assume
-        full responsibility for any actions taken.
+        tax, or legal professionals before making decisions.
+        By using this platform, you assume full responsibility
+        for any actions taken.
         """
     )
 
     st.markdown("---")
     st.caption(
-        "© Katta Wealth Insights — Educational platform only. "
-        "No advice. No guarantees. All rights reserved."
+        "© Katta Wealth Insights — Educational use only · No advice · No guarantees"
     )
 
 
-# ============================================================
-# OPTIONAL FOOTER LINK (SAFE ADDITION)
-# ============================================================
+# ------------------------------------------------------------
+# ALWAYS-VISIBLE LEGAL EXPANDER
+# ------------------------------------------------------------
 
-def render_footer():
+def render_legal_expander():
+    with st.expander(
+        "ℹ️ About, Legal & Disclosures (Always Available)",
+        expanded=False,
+    ):
+        render_about_us_legal()
+
+
+# ------------------------------------------------------------
+# ALWAYS-VISIBLE LEGAL BANNER (BOTTOM)
+# ------------------------------------------------------------
+
+def render_legal_banner():
     st.markdown(
         """
-        <hr style="margin-top:3rem; margin-bottom:1rem;">
-        <div style="font-size:0.85rem; color:#9ca3af; text-align:center;">
-            Educational use only · No financial advice · No guarantees ·
-            <span style="cursor:pointer;">About & Legal</span>
+        <div style="
+            background:#111827;
+            border-top:1px solid #374151;
+            padding:0.6rem 1rem;
+            font-size:0.8rem;
+            color:#9ca3af;
+            text-align:center;
+        ">
+            Educational use only · No financial, tax, or legal advice ·
+            No guarantees · Investing involves risk
         </div>
         """,
         unsafe_allow_html=True,
     )
-
-
 # ============================================================
-# OPTIONAL ROUTER EXTENSION (SAFE)
+# PART 11 / 12 — ADVANCED EDUCATIONAL FEATURES (SAFE)
 # ============================================================
 
-# Add this mode safely without breaking anything
-def extend_router_with_legal():
-    if st.session_state.app_mode == "legal":
-        render_about_us_legal()
-        return True
-    return False
-# ============================================================
-# PART 10 / 10 — ADVANCED EDUCATIONAL FEATURES (SAFE)
-# ============================================================
+# ------------------------------------------------------------
+# LEARNING NOTES / JOURNAL
+# ------------------------------------------------------------
 
-# ============================================================
-# USER NOTES / LEARNING JOURNAL
-# ============================================================
-
-def render_user_notes():
+def render_learning_notes():
     st.header("📝 Learning Notes")
 
     st.markdown(
         """
-        Use this space to write your **own understanding** of investing concepts,
+        Use this space to write **your own understanding** of investing concepts,
         portfolio behavior, or lessons learned.
+        Notes are stored only for the current session.
         """
     )
 
     notes = st.text_area(
-        "Your notes (saved locally in session)",
-        value=st.session_state.get("user_notes", ""),
+        "Your notes",
+        value=st.session_state.get("learning_notes", ""),
         height=220,
     )
 
     if st.button("Save Notes"):
-        st.session_state.user_notes = notes
+        st.session_state.learning_notes = notes
         st.success("Notes saved for this session.")
 
     if notes:
@@ -1389,9 +1549,9 @@ def render_user_notes():
         st.markdown(notes)
 
 
-# ============================================================
-# SCENARIO COMPARISON (EDUCATIONAL WHAT-IF)
-# ============================================================
+# ------------------------------------------------------------
+# SCENARIO COMPARISON (WHAT-IF EDUCATION)
+# ------------------------------------------------------------
 
 def render_scenario_comparison():
     st.header("📊 Scenario Comparison (What-If Analysis)")
@@ -1409,13 +1569,13 @@ def render_scenario_comparison():
         """
     )
 
-    col1, col2 = st.columns(2)
+    c1, c2 = st.columns(2)
 
-    with col1:
+    with c1:
         return_a = st.slider("Scenario A – Expected Return (%)", 0.0, 12.0, 7.0)
         vol_a = st.slider("Scenario A – Volatility (%)", 5.0, 30.0, 15.0)
 
-    with col2:
+    with c2:
         return_b = st.slider("Scenario B – Expected Return (%)", 0.0, 12.0, 5.0)
         vol_b = st.slider("Scenario B – Volatility (%)", 5.0, 30.0, 10.0)
 
@@ -1446,9 +1606,9 @@ def render_scenario_comparison():
     )
 
 
-# ============================================================
+# ------------------------------------------------------------
 # PORTFOLIO SNAPSHOTS (SESSION-LEVEL)
-# ============================================================
+# ------------------------------------------------------------
 
 def render_portfolio_snapshots():
     st.header("📸 Portfolio Snapshots")
@@ -1475,14 +1635,12 @@ def render_portfolio_snapshots():
             st.dataframe(snap, use_container_width=True)
 
 
-# ============================================================
-# USER PREFERENCES / SETTINGS
-# ============================================================
+# ------------------------------------------------------------
+# USER SETTINGS / PREFERENCES
+# ------------------------------------------------------------
 
 def render_settings():
     st.header("⚙️ Preferences & Settings")
-
-    st.markdown("Customize your learning experience.")
 
     show_tips = st.checkbox(
         "Show educational tips",
@@ -1501,14 +1659,14 @@ def render_settings():
     st.success("Preferences saved for this session.")
 
 
-# ============================================================
+# ------------------------------------------------------------
 # LEARNING CHECKLIST (STUDENT-FRIENDLY)
-# ============================================================
+# ------------------------------------------------------------
 
 def render_learning_checklist():
     st.header("✅ Learning Checklist")
 
-    checklist = {
+    default_checklist = {
         "Understand what a portfolio is": False,
         "Know why diversification matters": False,
         "Understand risk vs reward": False,
@@ -1516,30 +1674,32 @@ def render_learning_checklist():
         "Explore goal probability": False,
     }
 
-    saved = st.session_state.get("learning_checklist", checklist)
+    checklist = st.session_state.get(
+        "learning_checklist", default_checklist.copy()
+    )
 
     for item in checklist:
-        saved[item] = st.checkbox(item, value=saved.get(item, False))
+        checklist[item] = st.checkbox(item, value=checklist[item])
 
-    st.session_state.learning_checklist = saved
+    st.session_state.learning_checklist = checklist
 
-    completed = sum(saved.values())
-    total = len(saved)
+    completed = sum(checklist.values())
+    total = len(checklist)
 
     st.metric("Progress", f"{completed} / {total} topics completed")
 
 
-# ============================================================
+# ------------------------------------------------------------
 # EXTEND DEMO ROUTER WITH NEW FEATURES
-# ============================================================
+# ------------------------------------------------------------
 
 def demo_router_extended(page):
     # Existing routes
     demo_router(page)
 
-    # New educational features
+    # New educational routes
     if page == "Learning Notes":
-        render_user_notes()
+        render_learning_notes()
 
     elif page == "Scenario Comparison":
         render_scenario_comparison()
@@ -1552,24 +1712,82 @@ def demo_router_extended(page):
 
     elif page == "Learning Checklist":
         render_learning_checklist()
-def render_legal_banner():
-    st.markdown(
-        """
-        <div style="
-            background:#111827;
-            border-top:1px solid #374151;
-            padding:0.6rem 1rem;
-            font-size:0.8rem;
-            color:#9ca3af;
-            text-align:center;
-        ">
-            Educational use only · No financial, tax, or legal advice ·
-            No guarantees · Investing involves risk ·
-            <b>About & Legal</b> available below
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-def render_legal_expander():
-    with st.expander("ℹ️ About, Legal & Disclosures (Always Available)", expanded=False):
+# ============================================================
+# PART 12 / 12 — FINAL ROUTER & ENTRYPOINT
+# ============================================================
+
+# ------------------------------------------------------------
+# FINAL APPLICATION ROUTER (SINGLE SOURCE OF TRUTH)
+# ------------------------------------------------------------
+
+def route_app():
+    """
+    Authoritative router.
+    - Top navigation always visible
+    - Legal banner + expander ALWAYS visible
+    - Marketing, demo, and auth handled safely
+    """
+
+    # ---------------------------
+    # TOP NAV (ALWAYS)
+    # ---------------------------
+    render_top_nav()
+
+    mode = st.session_state.get("app_mode", "about")
+
+    # ---------------------------
+    # MARKETING / INFO PAGES
+    # ---------------------------
+    if mode == "about":
+        render_about()
+
+    elif mode == "features":
+        render_features()
+
+    elif mode == "how":
+        render_how()
+
+    elif mode == "benefits":
+        render_benefits()
+
+    elif mode == "legal":
         render_about_us_legal()
+
+    # ---------------------------
+    # DEMO MODE (AUTH + PAYWALL)
+    # ---------------------------
+    elif mode == "demo":
+
+        if not enforce_auth_and_payment():
+            # Even when blocked, legal must still show
+            render_legal_expander()
+            render_legal_banner()
+            return
+
+        # Sidebar + demo routing
+        page = render_sidebar()
+
+        # Use EXTENDED router if available
+        try:
+            demo_router_extended(page)
+        except Exception:
+            demo_router(page)
+
+    # ---------------------------
+    # FALLBACK
+    # ---------------------------
+    else:
+        render_about()
+
+    # ---------------------------
+    # ALWAYS-VISIBLE LEGAL (MANDATORY)
+    # ---------------------------
+    render_legal_expander()
+    render_legal_banner()
+
+
+# ------------------------------------------------------------
+# SINGLE ENTRYPOINT (ONLY ONE)
+# ------------------------------------------------------------
+
+route_app()
