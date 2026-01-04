@@ -125,7 +125,6 @@ def hash_pw(pw: str) -> str:
 # PART 1 / 15 — CORE CONFIG, SESSION, LEGAL (DO NOT RUN YET)
 # ============================================================
 
-from __future__ import annotations
 
 import os
 import json
