@@ -1154,6 +1154,44 @@ def route_app():
 # ============================================================
 
 route_app()
+# ------------------------------------------------------------
+# ALWAYS-SHOWN LEGAL CONTENT (GLOBAL)
+# ------------------------------------------------------------
+render_legal_expander()
+render_legal_banner()
+def route_app():
+    render_top_nav()
+
+    mode = st.session_state.app_mode
+
+    if mode == "about":
+        render_about()
+
+    elif mode == "features":
+        render_features()
+
+    elif mode == "how":
+        render_how()
+
+    elif mode == "benefits":
+        render_benefits()
+
+    elif mode == "legal":
+        render_about_us_legal()
+
+    elif mode == "demo":
+        if not enforce_auth_and_payment():
+            render_legal_expander()
+            render_legal_banner()
+            return
+
+        page = render_sidebar()
+        demo_router(page)
+
+    # ✅ ALWAYS visible, regardless of mode
+    render_legal_expander()
+    render_legal_banner()
+
 # ============================================================
 # PART 9 / 9 — ABOUT US + LEGAL & REGULATORY SAFE DISCLOSURES
 # ============================================================
@@ -1514,3 +1552,24 @@ def demo_router_extended(page):
 
     elif page == "Learning Checklist":
         render_learning_checklist()
+def render_legal_banner():
+    st.markdown(
+        """
+        <div style="
+            background:#111827;
+            border-top:1px solid #374151;
+            padding:0.6rem 1rem;
+            font-size:0.8rem;
+            color:#9ca3af;
+            text-align:center;
+        ">
+            Educational use only · No financial, tax, or legal advice ·
+            No guarantees · Investing involves risk ·
+            <b>About & Legal</b> available below
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+def render_legal_expander():
+    with st.expander("ℹ️ About, Legal & Disclosures (Always Available)", expanded=False):
+        render_about_us_legal()
