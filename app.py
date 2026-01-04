@@ -29,16 +29,21 @@ st.set_page_config(
 # ============================================================
 
 def init_session():
+   
     defaults = {
-        # Routing
-        "app_mode": "about",   # about | features | how | benefits |_
-# ============================================================
-# PART 2 / 12 — ABOUT US + LEGAL / COMPLIANCE (ALWAYS AVAILABLE)
-# ============================================================
+        "app_mode": "about",          # about | demo
+        "current_user": None,
+        "is_paid": False,
+        "portfolio_raw": None,
+        "portfolio": None,
+        "portfolio_meta": {},
+        "chat_history": [],
+        "alerts": [],
+    }
 
-# ------------------------------------------------------------
-# LEGAL SECTION HELPER
-# ------------------------------------------------------------
+    for k, v in defaults.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
 
 def legal_section(title: str, body: str):
     st.markdown(
