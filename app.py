@@ -184,19 +184,32 @@ def render_portfolio_summary():
     c2.metric("Largest Holding", largest["Ticker"])
     c3.metric("Largest Weight", f"{largest['Weight']*100:.1f}%")
 def render_allocation_chart():
-    st.subheader("🥧 Asset Allocation")
+    import matplotlib.pyplot as plt
 
-    df = st.session_state.get("portfolio_df")
-    if df is None:
+    portfolio = st.session_state.get("portfolio")
+    if portfolio is None or portfolio.empty:
+        st.info("Upload a portfolio first.")
         return
 
-    chart_df = df[["Ticker", "MarketValue"]].set_index("Ticker")
-    st.pyplot(chart_df.plot.pie(
-        y="MarketValue",
+    df = portfolio.drop(index="TOTAL", errors="ignore")
+
+    chart_df = (
+        df[["Ticker", "Market Value"]]
+        .set_index("Ticker")
+        .sort_values("Market Value", ascending=False)
+    )
+
+    fig, ax = plt.subplots(figsize=(6, 6))
+    ax.pie(
+        chart_df["Market Value"],
+        labels=chart_df.index,
         autopct="%1.1f%%",
-        legend=False,
-        figsize=(5,5)
-    ).figure)
+        startangle=90,
+    )
+    ax.set_title("Portfolio Allocation")
+
+    st.pyplot(fig)
+
 def render_concentration_metrics():
     st.subheader("⚠️ Concentration Metrics")
 
