@@ -168,6 +168,156 @@ def render_portfolio_overview():
 # ============================================================
 # MONTE CARLO
 # ============================================================
+def render_portfolio_summary():
+    st.subheader("📌 Portfolio Summary")
+
+    df = st.session_state.get("portfolio_df")
+    if df is None or df.empty:
+        st.info("No portfolio loaded.")
+        return
+
+    total_value = df["MarketValue"].sum()
+    largest = df.loc[df["MarketValue"].idxmax()]
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total Value", f"${total_value:,.0f}")
+    c2.metric("Largest Holding", largest["Ticker"])
+    c3.metric("Largest Weight", f"{largest['Weight']*100:.1f}%")
+def render_allocation_chart():
+    st.subheader("🥧 Asset Allocation")
+
+    df = st.session_state.get("portfolio_df")
+    if df is None:
+        return
+
+    chart_df = df[["Ticker", "MarketValue"]].set_index("Ticker")
+    st.pyplot(chart_df.plot.pie(
+        y="MarketValue",
+        autopct="%1.1f%%",
+        legend=False,
+        figsize=(5,5)
+    ).figure)
+def render_concentration_metrics():
+    st.subheader("⚠️ Concentration Metrics")
+
+    df = st.session_state.get("portfolio_df")
+    if df is None:
+        return
+
+    hhi = (df["Weight"] ** 2).sum()
+    max_weight = df["Weight"].max()
+
+    c1, c2 = st.columns(2)
+    c1.metric("Concentration Index", round(hhi, 3))
+    c2.metric("Max Position Weight", f"{max_weight*100:.1f}%")
+
+    if max_weight > 0.4:
+        st.warning("High concentration in a single holding.")
+    elif hhi > 0.25:
+        st.info("Moderate concentration.")
+    else:
+        st.success("Well diversified portfolio.")
+def render_stress_test():
+    st.subheader("🧪 Stress Test Scenarios")
+
+    df = st.session_state.get("portfolio_df")
+    if df is None:
+        return
+
+    scenarios = {
+        "Market -20%": 0.8,
+        "Market -30%": 0.7,
+        "Market +10%": 1.1,
+    }
+
+    results = []
+    total = df["MarketValue"].sum()
+
+    for name, factor in scenarios.items():
+        results.append({
+            "Scenario": name,
+            "Portfolio Value": round(total * factor, 0),
+            "Change %": f"{(factor-1)*100:.0f}%"
+        })
+
+    st.dataframe(pd.DataFrame(results), use_container_width=True)
+def render_rebalancing_suggestions():
+    st.subheader("⚖️ Rebalancing Suggestions")
+
+    df = st.session_state.get("portfolio_df")
+    if df is None:
+        return
+
+    suggestions = []
+
+    for _, row in df.iterrows():
+        if row["Weight"] > 0.35:
+            suggestions.append(
+                f"Consider reducing **{row['Ticker']}** (weight {row['Weight']*100:.1f}%)"
+            )
+
+    if not suggestions:
+        st.success("Portfolio appears balanced.")
+    else:
+        for s in suggestions:
+            st.markdown(f"- {s}")
+def save_portfolio(email, df):
+    conn = db_connect()
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS portfolios (
+            email TEXT,
+            data TEXT,
+            saved_at TEXT
+        )
+    """)
+    conn.execute(
+        "INSERT INTO portfolios VALUES (?,?,?)",
+        (email, df.to_json(), dt.datetime.utcnow().isoformat())
+    )
+    conn.commit()
+    conn.close()
+
+def load_latest_portfolio(email):
+    conn = db_connect()
+    row = conn.execute("""
+        SELECT data FROM portfolios
+        WHERE email=?
+        ORDER BY saved_at DESC
+        LIMIT 1
+    """, (email,)).fetchone()
+    conn.close()
+
+    if row:
+        return pd.read_json(row[0])
+    return None
+st.markdown("---")
+if st.button("💾 Save Portfolio"):
+    save_portfolio(st.session_state.current_user, df)
+    st.success("Portfolio saved.")
+
+if st.button("📂 Load Last Saved Portfolio"):
+    loaded = load_latest_portfolio(st.session_state.current_user)
+    if loaded is not None:
+        st.session_state.portfolio_df = loaded
+        st.success("Portfolio loaded.")
+        st.rerun()
+def render_portfolio_overview():
+    st.header("📊 Portfolio Overview")
+
+    df = pd.DataFrame({
+        "Ticker": ["AAPL", "MSFT", "VOO"],
+        "MarketValue": [10000, 8000, 12000],
+    })
+    df["Weight"] = df["MarketValue"] / df["MarketValue"].sum()
+    st.session_state.portfolio_df = df
+
+    st.dataframe(df, use_container_width=True)
+
+    render_portfolio_summary()
+    render_allocation_chart()
+    render_concentration_metrics()
+    render_stress_test()
+    render_rebalancing_suggestions()
 
 def render_goal_probability():
     st.header("🎯 Goal Probability")
