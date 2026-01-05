@@ -1,8 +1,3 @@
-# ============================================================
-# KATTA WEALTH INSIGHTS — OPTION B CLEAN REBUILD
-# PART 1 / 15 — CORE CONFIG, SESSION, LEGAL (DO NOT RUN YET)
-# ============================================================
-
 from __future__ import annotations
 
 import os
@@ -10,14 +5,12 @@ import json
 import sqlite3
 import hashlib
 import datetime as dt
-from typing import Dict, Any, Optional, List
+from typing import Any, Dict, Optional, List
 
 import numpy as np
 import pandas as pd
 import streamlit as st
 
-
-# Optional deps
 try:
     import yfinance as yf
 except Exception:
@@ -27,6 +20,7 @@ try:
     from groq import Groq
 except Exception:
     Groq = None
+
 
 # ============================================================
 # APP CONFIG
